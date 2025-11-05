@@ -1913,12 +1913,285 @@ class UnderwaterEffectExperiment:
         print(f"Results: {self.experiment_dir}")
 
 
+class Visualizer:
+    """Generate visualizations of predictions and ground truth"""
+    
+    def __init__(self, show_conf: float, show_iou: float, force_reeval: bool = False):
+        self.show_conf = show_conf
+        self.show_iou = show_iou
+        self.force_reeval = force_reeval
+        self.vis_dir = RESULTS_DIR / "vis"
+        self.preds_dir = self.vis_dir / "PREDs"
+        self.gts_dir = self.vis_dir / "GTs"
+        self.params_file = self.vis_dir / "parameters.json"
+        
+        # Create directories
+        self.vis_dir.mkdir(parents=True, exist_ok=True)
+        self.preds_dir.mkdir(parents=True, exist_ok=True)
+        self.gts_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Load data config
+        with open(DATA_YAML_PATH, 'r') as f:
+            self.data_config = yaml.safe_load(f)
+        
+        self.class_names = self.data_config['names']
+        self.class_names = {int(k): v for k, v in self.class_names.items()}
+        self.num_classes = self.data_config['nc']
+        
+        # Find best model
+        self.best_model_path = self.find_best_model()
+        self.model = YOLO(str(self.best_model_path))
+        
+        # Load validation images
+        self.load_validation_images()
+        
+        # Colors for classes (BGR format for OpenCV)
+        self.colors = [
+            (0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255), (255, 0, 255),
+            (255, 255, 0), (0, 165, 255), (128, 0, 128), (203, 192, 255), (0, 0, 139),
+            (128, 128, 128), (0, 0, 0), (255, 255, 255), (0, 128, 0), (128, 0, 0),
+            (0, 215, 255), (180, 105, 255), (50, 205, 50), (255, 20, 147), (255, 140, 0),
+            (0, 191, 255), (255, 69, 0), (138, 43, 226), (220, 20, 60), (0, 250, 154)
+        ]
+    
+    def find_best_model(self) -> Path:
+        """Find the best model based on F1 score"""
+        best_f1 = -1
+        best_iteration = None
+        
+        print("\nFinding best model for visualization...")
+        for i in range(4):
+            metrics_file = RESULTS_DIR / f"model_{i}" / "metrics.json"
+            if metrics_file.exists():
+                with open(metrics_file, 'r') as f:
+                    metrics = json.load(f)
+                    f1 = metrics.get('f1', 0)
+                    if f1 > best_f1:
+                        best_f1 = f1
+                        best_iteration = i
+        
+        if best_iteration is None:
+            raise FileNotFoundError("No model results found. Run model comparison first!")
+        
+        print(f"  -> Best: Iteration {best_iteration} (F1 = {best_f1:.4f})")
+        
+        model_folder = TRAINED_MODELS_DIR / str(best_iteration)
+        possible_paths = [
+            model_folder / "weights" / "best.pt",
+            model_folder / "best.pt",
+        ]
+        
+        for path in possible_paths:
+            if path.exists():
+                return path
+        
+        raise FileNotFoundError(f"Could not find best.pt for iteration {best_iteration}")
+    
+    def load_validation_images(self):
+        """Load validation image paths"""
+        dataset_path = Path(self.data_config['path'])
+        val_file = dataset_path / self.data_config['val']
+        
+        with open(val_file, 'r') as f:
+            self.val_images = [line.strip() for line in f if line.strip()]
+        
+        print(f"Loaded {len(self.val_images)} validation images")
+    
+    def check_parameters_match(self) -> bool:
+        """Check if current parameters match saved parameters"""
+        if not self.params_file.exists():
+            return False
+        
+        try:
+            with open(self.params_file, 'r') as f:
+                saved_params = json.load(f)
+            
+            current_params = {
+                'show_conf': self.show_conf,
+                'show_iou': self.show_iou,
+                'best_model': str(self.best_model_path),
+                'augment': True,
+            }
+            
+            return saved_params == current_params
+        except:
+            return False
+    
+    def save_parameters(self):
+        """Save visualization parameters"""
+        params = {
+            'show_conf': self.show_conf,
+            'show_iou': self.show_iou,
+            'best_model': str(self.best_model_path),
+            'augment': True,
+        }
+        
+        with open(self.params_file, 'w') as f:
+            json.dump(params, f, indent=2)
+    
+    def draw_boxes_on_image(self, img, boxes, is_prediction=True):
+        """Draw bounding boxes on image"""
+        img_copy = img.copy()
+        h, w = img_copy.shape[:2]
+        
+        for box in boxes:
+            if is_prediction:
+                # Prediction: (class_id, x1, y1, x2, y2, confidence)
+                class_id, x1, y1, x2, y2, conf = box
+                x1_px, y1_px, x2_px, y2_px = int(x1), int(y1), int(x2), int(y2)
+                label = f"{self.class_names.get(class_id, f'Class_{class_id}')} ({conf:.2f})"
+            else:
+                # GT: (class_id, x_center, y_center, width, height) - normalized
+                class_id, x_center, y_center, width, height = box
+                x1_px = int((x_center - width/2) * w)
+                y1_px = int((y_center - height/2) * h)
+                x2_px = int((x_center + width/2) * w)
+                y2_px = int((y_center + height/2) * h)
+                label = self.class_names.get(class_id, f'Class_{class_id}')
+            
+            # Ensure coordinates are within bounds
+            x1_px = max(0, min(x1_px, w-1))
+            y1_px = max(0, min(y1_px, h-1))
+            x2_px = max(0, min(x2_px, w-1))
+            y2_px = max(0, min(y2_px, h-1))
+            
+            if x2_px <= x1_px or y2_px <= y1_px:
+                continue
+            
+            # Get color
+            color = self.colors[class_id % len(self.colors)]
+            
+            # Draw rectangle
+            cv2.rectangle(img_copy, (x1_px, y1_px), (x2_px, y2_px), color, 2)
+            
+            # Draw label background
+            (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            cv2.rectangle(img_copy, (x1_px, y1_px - text_height - 10),
+                         (x1_px + text_width, y1_px), color, -1)
+            
+            # Draw label text
+            cv2.putText(img_copy, label, (x1_px, y1_px - 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        
+        return img_copy
+    
+    def run(self):
+        """Generate visualizations"""
+        print("\n" + "="*60)
+        print("GENERATING VISUALIZATIONS")
+        print("="*60)
+        print(f"Best model: {self.best_model_path}")
+        print(f"Show conf: {self.show_conf}")
+        print(f"Show IoU: {self.show_iou}")
+        
+        # Check if parameters match
+        if not self.force_reeval and self.check_parameters_match():
+            print("\n✓ Visualizations already exist with same parameters!")
+            print("  (use --force to regenerate)")
+            return
+        
+        if self.force_reeval:
+            print("\n🔄 Force re-generation enabled")
+        else:
+            print("\n📊 Generating new visualizations...")
+        
+        # Save parameters
+        self.save_parameters()
+        
+        total = len(self.val_images)
+        for idx, img_path in enumerate(self.val_images):
+            if (idx + 1) % 20 == 0 or idx == 0 or (idx + 1) == total:
+                print(f"  Processing: {idx + 1}/{total}...")
+            
+            img_path = Path(img_path)
+            img = cv2.imread(str(img_path))
+            if img is None:
+                continue
+            
+            img_name = img_path.name
+            
+            # Generate predictions with augment=True
+            results = self.model.predict(
+                source=str(img_path),
+                conf=self.show_conf,
+                iou=self.show_iou,
+                imgsz=IMGSZ,
+                device=DEVICE,
+                verbose=False,
+                augment=True,  # Always use augmentation
+            )
+            
+            # Extract predictions
+            predictions = []
+            if results and len(results) > 0:
+                result = results[0]
+                if result.boxes is not None:
+                    boxes = result.boxes.xyxy.cpu().numpy()
+                    confidences = result.boxes.conf.cpu().numpy()
+                    class_ids = result.boxes.cls.cpu().numpy().astype(int)
+                    
+                    for i in range(len(boxes)):
+                        predictions.append((
+                            class_ids[i],
+                            boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3],
+                            confidences[i]
+                        ))
+            
+            # Draw predictions
+            img_preds = self.draw_boxes_on_image(img, predictions, is_prediction=True)
+            
+            # Add header
+            header_text = f"Predictions ({len(predictions)} detections)"
+            cv2.putText(img_preds, header_text, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            
+            # Save predictions visualization
+            cv2.imwrite(str(self.preds_dir / img_name), img_preds)
+            
+            # Load ground truth
+            label_path = str(img_path).replace('images', 'labels').replace('.png', '.txt')
+            gt_boxes = []
+            
+            if Path(label_path).exists():
+                with open(label_path, 'r') as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 5:
+                            class_id = int(parts[0])
+                            x_center = float(parts[1])
+                            y_center = float(parts[2])
+                            width = float(parts[3])
+                            height = float(parts[4])
+                            gt_boxes.append((class_id, x_center, y_center, width, height))
+            
+            # Draw ground truth
+            img_gts = self.draw_boxes_on_image(img, gt_boxes, is_prediction=False)
+            
+            # Add header
+            header_text = f"Ground Truth ({len(gt_boxes)} annotations)"
+            cv2.putText(img_gts, header_text, (10, 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            
+            # Save GT visualization
+            cv2.imwrite(str(self.gts_dir / img_name), img_gts)
+        
+        print("\n" + "="*60)
+        print("VISUALIZATION COMPLETE!")
+        print("="*60)
+        print(f"Predictions: {self.preds_dir}")
+        print(f"Ground Truth: {self.gts_dir}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare trained models and run experiments")
     parser.add_argument("--conf", type=float, default=0.001, 
                        help="Confidence threshold for predictions (default: 0.001)")
     parser.add_argument("--iou", type=float, default=0.5, 
                        help="IoU threshold for validation (default: 0.5)")
+    parser.add_argument("--show_conf", type=float, default=0.2,
+                       help="Confidence threshold for visualization (default: 0.2)")
+    parser.add_argument("--show_iou", type=float, default=0.5,
+                       help="IoU threshold for visualization NMS (default: 0.5)")
     parser.add_argument("--force", action="store_true",
                        help="Force re-evaluation even if results exist")
     parser.add_argument("--experiment", choices=['gaussian', 'underwater', 'tta', 'all'], default=None,
@@ -1931,10 +2204,17 @@ def main():
     print(f"{'='*60}")
     print(f"Confidence threshold: {args.conf}")
     print(f"IoU threshold: {args.iou}")
+    print(f"Visualization conf: {args.show_conf}")
+    print(f"Visualization IoU: {args.show_iou}")
     if args.force:
         print(f"Force re-evaluation: YES")
     
     try:
+        # Always run visualizations first (with parameter checking)
+        visualizer = Visualizer(show_conf=args.show_conf, show_iou=args.show_iou, 
+                               force_reeval=args.force)
+        visualizer.run()
+        
         # Run model comparison if no experiment specified or if 'all'
         if args.experiment is None or args.experiment == 'all':
             print("\n" + "="*60)
