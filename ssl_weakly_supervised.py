@@ -515,6 +515,25 @@ class WeaklySupervisedPipeline:
             logger.info(f"{'#'*60}")
             
             try:
+                # Check if current iteration already completed
+                current_iter_path = self.output_dir / f"student_iter{iteration}" / "weights" / "best.pt"
+                if current_iter_path.exists():
+                    logger.info(f"✓ Iteration {iteration} already completed (best.pt exists)")
+                    logger.info(f"  Skipping to next iteration...")
+                    # Load existing results if available
+                    continue
+                
+                # Check if previous iteration exists (prerequisite)
+                if iteration > 1:
+                    prev_iter_path = self.output_dir / f"student_iter{iteration-1}" / "weights" / "best.pt"
+                    if not prev_iter_path.exists():
+                        logger.warning(f"⚠ Iteration {iteration-1} not complete (best.pt missing)")
+                        logger.warning(f"  Cannot train iteration {iteration} without previous teacher")
+                        logger.warning(f"  Skipping iteration {iteration}...")
+                        continue
+                    else:
+                        logger.info(f"✓ Previous iteration {iteration-1} completed, can proceed")
+                
                 # Step 1: Tune confidence threshold
                 best_conf = self.tune_confidence_for_iteration(iteration)
                 

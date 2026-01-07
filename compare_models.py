@@ -18,10 +18,11 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import json
 import argparse
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 from math import pi
 import cv2
 import shutil
+from cycler import cycler
 
 # Set seed for reproducibility
 SEED = 42
@@ -47,7 +48,11 @@ MODEL_FOLDERS = {
     1: "1",  # SSL iteration 1
     2: "2",  # SSL iteration 2
     3: "3",  # SSL iteration 3
+    4: "4",  # SSL iteration 4
 }
+
+BEST_MODEL_DIR = TRAINED_MODELS_DIR / "best_model"
+BEST_INFO_PATH = BEST_MODEL_DIR / "best_info.json"
 
 # Gaussian blur configurations for robustness experiment
 # (kernel_size, sigma) - increasing blur levels
@@ -68,6 +73,15 @@ UNDERWATER_CONFIGS = [
     (0.50, 0.35, 0.50, 0.35),  # Level 3: Deep water (strong effect)
     (0.70, 0.50, 0.70, 0.50),  # Level 4: Very deep/murky (intense effect)
 ]
+
+# Distinct color palettes (Okabe-Ito inspired for clarity)
+ITERATION_PALETTE = ['#4477AA', '#EE6677', '#228833', '#CCBB44', '#AA3377', '#66CCEE', '#AA4499', '#BBBBBB']
+METRIC_PALETTE = ['#4477AA', '#EE6677', '#228833', '#CCBB44', '#AA3377']
+plt.rcParams['axes.prop_cycle'] = cycler(color=ITERATION_PALETTE)
+
+def get_colors(count_or_iterable, palette=ITERATION_PALETTE):
+    count = len(count_or_iterable) if isinstance(count_or_iterable, (list, tuple, set)) else int(count_or_iterable)
+    return [palette[i % len(palette)] for i in range(count)]
 
 class ModelComparator:
     def __init__(self, conf_threshold: float, iou_threshold: float, force_reeval: bool = False):
@@ -307,7 +321,7 @@ class ModelComparator:
         ax = fig.add_subplot(111, projection='polar')
         
         # Colors for each iteration
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+        iteration_colors = get_colors(iterations)
         
         # Number of variables
         num_vars = len(metrics_to_plot)
@@ -324,11 +338,11 @@ class ModelComparator:
             values_plot = values + values[:1]  # Complete the circle
             angles_plot = angles + angles[:1]
             
-            # Plot line and fill
+            color = iteration_colors[idx % len(iteration_colors)]
             ax.plot(angles_plot, values_plot, 'o-', linewidth=2.5, 
-                   color=colors[idx % len(colors)], label=f"Iteration {iteration}",
+                   color=color, label=f"Iteration {iteration}",
                    markersize=6)
-            ax.fill(angles_plot, values_plot, alpha=0.15, color=colors[idx % len(colors)])
+            ax.fill(angles_plot, values_plot, alpha=0.15, color=color)
         
         # Set metric names as labels with better positioning
         ax.set_xticks(angles)
@@ -362,10 +376,11 @@ class ModelComparator:
         # Keep the line plot to show progression
         fig, ax = plt.subplots(figsize=(10, 6))
         
+        metric_colors = get_colors(len(metrics_to_plot), METRIC_PALETTE)
         for i, (metric, label) in enumerate(zip(metrics_to_plot, metric_labels)):
             values = [data[f"iter_{iteration}"][metric] for iteration in iterations]
             ax.plot(iterations, values, marker='o', linewidth=2, 
-                   label=label, color=colors[i % len(colors)])
+                   label=label, color=metric_colors[i % len(metric_colors)])
         
         ax.set_xlabel('Iteration', fontsize=12)
         ax.set_ylabel('Score', fontsize=12)
@@ -386,7 +401,7 @@ class ModelComparator:
         metric_titles = ['Precision', 'Recall', 'F1-Score', 'AP50-95']
         
         # Colors for each iteration
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+        iteration_colors = get_colors(iterations)
         
         # Create 2x2 subplot grid with polar projection
         fig = plt.figure(figsize=(16, 16))
@@ -423,11 +438,11 @@ class ModelComparator:
                 values_plot = values + values[:1]  # Complete the circle
                 angles_plot = angles + angles[:1]
                 
-                # Plot line and fill
+                color = iteration_colors[iter_idx % len(iteration_colors)]
                 line, = ax.plot(angles_plot, values_plot, 'o-', linewidth=2, 
-                       color=colors[iter_idx % len(colors)], label=f"Iteration {iteration}",
+                       color=color, label=f"Iteration {iteration}",
                        markersize=5)
-                ax.fill(angles_plot, values_plot, alpha=0.12, color=colors[iter_idx % len(colors)])
+                ax.fill(angles_plot, values_plot, alpha=0.12, color=color)
                 
                 # Collect handles and labels from first subplot only (all iterations)
                 if idx == 0:
@@ -481,7 +496,7 @@ class ModelComparator:
         metrics = ['precision', 'recall', 'f1', 'ap50_95']
         
         # Colors for each iteration
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728']
+        iteration_colors = get_colors(iterations)
         
         for metric in metrics:
             # Prepare data
@@ -519,11 +534,11 @@ class ModelComparator:
                 values_plot = values + values[:1]  # Complete the circle
                 angles_plot = angles + angles[:1]
                 
-                # Plot line and fill
+                color = iteration_colors[idx % len(iteration_colors)]
                 ax.plot(angles_plot, values_plot, 'o-', linewidth=2.5, 
-                       color=colors[idx % len(colors)], label=f"Iteration {iteration}",
+                       color=color, label=f"Iteration {iteration}",
                        markersize=6)
-                ax.fill(angles_plot, values_plot, alpha=0.15, color=colors[idx % len(colors)])
+                ax.fill(angles_plot, values_plot, alpha=0.15, color=color)
             
             # Set class names as labels with better positioning
             ax.set_xticks(angles)
@@ -590,16 +605,20 @@ class ModelComparator:
         print("\n" + "="*60)
         print("STARTING MODEL COMPARISON")
         print("="*60)
+        iterations = get_iterations_for_analysis()
+        if not iterations:
+            print("\n❌ No trained models found in MODEL_FOLDERS. Nothing to compare.")
+            return
         
         # Check if all results already exist
-        all_exist = all(self.check_results_exist(i) for i in sorted(MODEL_FOLDERS.keys()))
+        all_exist = all(self.check_results_exist(i) for i in iterations)
         
         if all_exist and not self.force_reeval:
             print("\n✓ All model results already exist!")
             print("Loading existing results (use --force to re-evaluate)...\n")
             
             # Load existing results
-            for iteration in sorted(MODEL_FOLDERS.keys()):
+            for iteration in iterations:
                 try:
                     metrics = self.load_existing_results(iteration)
                     self.all_results[iteration] = metrics
@@ -624,7 +643,7 @@ class ModelComparator:
             else:
                 print("\n📊 Some results missing. Evaluating models...\n")
             
-            for iteration in sorted(MODEL_FOLDERS.keys()):
+            for iteration in iterations:
                 # Check if this specific model needs evaluation
                 if not self.force_reeval and self.check_results_exist(iteration):
                     print(f"\n✓ Model {iteration} results already exist, loading...")
@@ -666,6 +685,7 @@ class ModelComparator:
         print("Creating comparison plots and tables...")
         print("="*60)
         self.compare_all_models()
+        update_best_model_from_results(self.all_results)
         
         print("\n" + "="*60)
         print("MODEL COMPARISON COMPLETE!")
@@ -701,38 +721,33 @@ class AugmentationConsistencyExperiment:
     
     def find_best_model(self) -> Path:
         """Find the best model based on F1 score"""
-        best_f1 = -1
-        best_iteration = None
-        
         print("\nFinding best model...")
-        for i in range(4):
-            metrics_file = RESULTS_DIR / f"model_{i}" / "metrics.json"
-            if metrics_file.exists():
-                with open(metrics_file, 'r') as f:
-                    metrics = json.load(f)
-                    f1 = metrics.get('f1', 0)
-                    print(f"  Model {i}: F1 = {f1:.4f}")
-                    
-                    if f1 > best_f1:
-                        best_f1 = f1
-                        best_iteration = i
-        
-        if best_iteration is None:
+        iterations = get_iterations_for_analysis()
+        if not iterations:
             raise FileNotFoundError("No model results found. Run model comparison first!")
-        
-        print(f"  -> Best: Iteration {best_iteration} (F1 = {best_f1:.4f})")
-        
-        model_folder = TRAINED_MODELS_DIR / str(best_iteration)
-        possible_paths = [
-            model_folder / "weights" / "best.pt",
-            model_folder / "best.pt",
-        ]
-        
-        for path in possible_paths:
-            if path.exists():
-                return path
-        
-        raise FileNotFoundError(f"Could not find best.pt for iteration {best_iteration}")
+
+        for iteration in iterations:
+            metrics = load_iteration_metrics(iteration)
+            if not metrics:
+                continue
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  Model {iteration}: F1 = {f1:.4f}")
+
+        best_path = get_cached_best_model_path(force=self.force_reeval)
+        info = load_best_model_info()
+        if info:
+            iteration = info.get('iteration', 'N/A')
+            metrics = info.get('metrics', {})
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  → Best: Iteration {iteration} (F1 = {f1:.4f})")
+            else:
+                print(f"  → Best: Iteration {iteration}")
+        else:
+            print("  → Best model cached without metadata")
+
+        return best_path
     
     def run_validation(self, use_augment: bool) -> Dict:
         """Run validation with or without test-time augmentation"""
@@ -1054,37 +1069,33 @@ class GaussianBlurExperiment:
     
     def find_best_model(self) -> Path:
         """Find the best model based on F1 score from existing results"""
-        best_f1 = -1
-        best_iteration = None
-        
-        for i in range(4):
-            metrics_file = RESULTS_DIR / f"model_{i}" / "metrics.json"
-            if metrics_file.exists():
-                with open(metrics_file, 'r') as f:
-                    metrics = json.load(f)
-                    f1 = metrics.get('f1', 0)
-                    print(f"  Model {i}: F1 = {f1:.4f}")
-                    
-                    if f1 > best_f1:
-                        best_f1 = f1
-                        best_iteration = i
-        
-        if best_iteration is None:
+        print("\nFinding best model...")
+        iterations = get_iterations_for_analysis()
+        if not iterations:
             raise FileNotFoundError("No model results found. Run model comparison first!")
-        
-        print(f"  → Best: Iteration {best_iteration} (F1 = {best_f1:.4f})")
-        
-        model_folder = TRAINED_MODELS_DIR / str(best_iteration)
-        possible_paths = [
-            model_folder / "weights" / "best.pt",
-            model_folder / "best.pt",
-        ]
-        
-        for path in possible_paths:
-            if path.exists():
-                return path
-        
-        raise FileNotFoundError(f"Could not find best.pt for iteration {best_iteration}")
+
+        for iteration in iterations:
+            metrics = load_iteration_metrics(iteration)
+            if not metrics:
+                continue
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  Model {iteration}: F1 = {f1:.4f}")
+
+        best_path = get_cached_best_model_path(force=self.force_reeval)
+        info = load_best_model_info()
+        if info:
+            iteration = info.get('iteration', 'N/A')
+            metrics = info.get('metrics', {})
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  → Best: Iteration {iteration} (F1 = {f1:.4f})")
+            else:
+                print(f"  → Best: Iteration {iteration}")
+        else:
+            print("  → Best model cached without metadata")
+
+        return best_path
     
     def load_validation_images(self):
         """Load validation image paths"""
@@ -1092,7 +1103,37 @@ class GaussianBlurExperiment:
         val_file = dataset_path / self.data_config['val']
         
         with open(val_file, 'r') as f:
-            self.val_images = [line.strip() for line in f if line.strip()]
+            raw_paths = [line.strip() for line in f if line.strip()]
+        
+        # Convert to absolute paths
+        self.val_images = []
+        dataset_folder_name = dataset_path.name  # e.g., "detector_dataset_simple"
+        
+        for path_str in raw_paths:
+            path = Path(path_str)
+            if not path.is_absolute():
+                # If path already starts with dataset folder name, resolve relative to parent
+                if path_str.startswith(dataset_folder_name):
+                    # Resolve relative to parent of dataset folder
+                    abs_path = (dataset_path.parent / path).resolve()
+                else:
+                    # Resolve relative to dataset folder
+                    abs_path = (dataset_path / path).resolve()
+                
+                if not abs_path.exists():
+                    # Try resolving relative to val.txt location
+                    abs_path = (val_file.parent / path).resolve()
+                if not abs_path.exists():
+                    # Try as absolute path directly
+                    abs_path = path.resolve()
+                path = abs_path
+            else:
+                path = path.resolve()
+            
+            if path.exists():
+                self.val_images.append(str(path))
+            else:
+                print(f"Warning: Validation image not found: {path}")
         
         print(f"Loaded {len(self.val_images)} validation images")
     
@@ -1131,35 +1172,96 @@ class GaussianBlurExperiment:
         print(f"\nCreating Version {version} (k={kernel_size}, s={sigma})")
         
         if kernel_size == 0:
-            blur_dir = self.experiment_dir / f"version_{version}_original"
-        else:
-            blur_dir = self.experiment_dir / f"version_{version}_k{kernel_size}_s{sigma}"
+            print("  Using original validation dataset for baseline (no image copying).")
+            return Path(DATA_YAML_PATH)
         
+        blur_dir = self.experiment_dir / f"version_{version}_k{kernel_size}_s{sigma}"
+        if blur_dir.exists():
+            shutil.rmtree(blur_dir)
         images_dir = blur_dir / "images"
         labels_dir = blur_dir / "labels"
         images_dir.mkdir(parents=True, exist_ok=True)
         labels_dir.mkdir(parents=True, exist_ok=True)
         
+        processed_images: List[Path] = []
         total = len(self.val_images)
-        for idx, img_path in enumerate(self.val_images):
+        for idx, img_path_str in enumerate(self.val_images):
             if (idx + 1) % 50 == 0 or idx == 0 or (idx + 1) == total:
                 print(f"  Processing: {idx + 1}/{total} images...")
             
-            img_path = Path(img_path)
+            # Convert to Path but preserve detector_dataset_simple (don't resolve symlinks)
+            img_path = Path(img_path_str)
+            if not img_path.is_absolute():
+                # Make absolute but preserve detector_dataset_simple
+                if 'detector_dataset_simple' in img_path_str:
+                    img_path = Path.cwd() / img_path_str
+                else:
+                    img_path = img_path.resolve()
+            
             img = cv2.imread(str(img_path))
             if img is None:
                 continue
             
             blurred_img = self.apply_gaussian_blur(img, kernel_size, sigma)
             output_img_path = images_dir / img_path.name
-            cv2.imwrite(str(output_img_path), blurred_img)
+            success = cv2.imwrite(str(output_img_path), blurred_img)
+            if not success:
+                continue
+
+            processed_images.append(output_img_path)
+
+            # Copy label file - construct path from ORIGINAL string BEFORE resolve()
+            # CRITICAL: detector_dataset_simple resolves to detector_dataset via symlink
+            # We must construct label path from the original string, not the resolved path
             
-            label_path = str(img_path).replace('images', 'labels').replace('.png', '.txt')
-            label_path = Path(label_path)
+            # Extract filename from original string
+            filename = Path(img_path_str).name
             
-            if label_path.exists():
+            # Construct label path explicitly to detector_dataset_simple
+            if 'detector_dataset_simple' in img_path_str:
+                # Split on detector_dataset_simple
+                parts = img_path_str.split('detector_dataset_simple', 1)
+                if len(parts) == 2:
+                    base_part = parts[0].rstrip('\\/') if parts[0] else ''
+                    # Construct absolute path to detector_dataset_simple
+                    if base_part:
+                        if Path(base_part).is_absolute():
+                            dataset_root = Path(base_part) / 'detector_dataset_simple'
+                        else:
+                            dataset_root = Path.cwd() / base_part / 'detector_dataset_simple'
+                    else:
+                        dataset_root = Path.cwd() / 'detector_dataset_simple'
+                    
+                    # Construct label path
+                    label_path = dataset_root / 'labels' / filename
+                    if label_path.suffix in ['.png', '.jpg', '.jpeg']:
+                        label_path = label_path.with_suffix('.txt')
+                else:
+                    label_path = None
+            else:
+                label_path = None
+            
+            # Fallback if construction failed
+            if label_path is None:
+                # Try from resolved path but replace detector_dataset with detector_dataset_simple
+                label_path = img_path.parent.parent / 'labels' / img_path.name
+                if label_path.suffix in ['.png', '.jpg', '.jpeg']:
+                    label_path = label_path.with_suffix('.txt')
+                # Replace detector_dataset with detector_dataset_simple
+                label_path_str = str(label_path)
+                if 'detector_dataset' in label_path_str and 'detector_dataset_simple' not in label_path_str:
+                    label_path_str = label_path_str.replace('detector_dataset', 'detector_dataset_simple')
+                    label_path = Path(label_path_str)
+            
+            # Only copy if label exists and is from detector_dataset_simple
+            if label_path.exists() and label_path.is_file() and 'detector_dataset_simple' in str(label_path):
                 output_label_path = labels_dir / label_path.name
-                shutil.copy2(label_path, output_label_path)
+                shutil.copy2(str(label_path), str(output_label_path))
+            else:
+                print(f"  Warning: Could not find valid label file for {filename} (expected: {label_path})")
+        
+        if not processed_images:
+            raise RuntimeError("No images were processed for Gaussian blur dataset")
         
         # Create data.yaml
         data_yaml = blur_dir / "data.yaml"
@@ -1177,10 +1279,8 @@ class GaussianBlurExperiment:
         
         val_txt = blur_dir / "val.txt"
         with open(val_txt, 'w') as f:
-            for img_path in self.val_images:
-                img_name = Path(img_path).name
-                abs_path = (images_dir / img_name).absolute()
-                f.write(f"{abs_path}\n")
+            for processed_path in processed_images:
+                f.write(f"{processed_path}\n")
         
         return data_yaml
     
@@ -1262,7 +1362,7 @@ class GaussianBlurExperiment:
         
         # Plot 1: Degradation curve
         fig, ax = plt.subplots(figsize=(12, 7))
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        colors = ['#2E86AB', '#E15759', '#76B041', '#F28E2B', '#9467BD']
         
         for i, (metric, label) in enumerate(zip(metrics, metric_labels)):
             values = degradation_data[metric]
@@ -1466,38 +1566,33 @@ class UnderwaterEffectExperiment:
     
     def find_best_model(self) -> Path:
         """Find the best model based on F1 score"""
-        best_f1 = -1
-        best_iteration = None
-        
         print("\nFinding best model...")
-        for i in range(4):
-            metrics_file = RESULTS_DIR / f"model_{i}" / "metrics.json"
-            if metrics_file.exists():
-                with open(metrics_file, 'r') as f:
-                    metrics = json.load(f)
-                    f1 = metrics.get('f1', 0)
-                    print(f"  Model {i}: F1 = {f1:.4f}")
-                    
-                    if f1 > best_f1:
-                        best_f1 = f1
-                        best_iteration = i
-        
-        if best_iteration is None:
+        iterations = get_iterations_for_analysis()
+        if not iterations:
             raise FileNotFoundError("No model results found. Run model comparison first!")
-        
-        print(f"  -> Best: Iteration {best_iteration} (F1 = {best_f1:.4f})")
-        
-        model_folder = TRAINED_MODELS_DIR / str(best_iteration)
-        possible_paths = [
-            model_folder / "weights" / "best.pt",
-            model_folder / "best.pt",
-        ]
-        
-        for path in possible_paths:
-            if path.exists():
-                return path
-        
-        raise FileNotFoundError(f"Could not find best.pt for iteration {best_iteration}")
+
+        for iteration in iterations:
+            metrics = load_iteration_metrics(iteration)
+            if not metrics:
+                continue
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  Model {iteration}: F1 = {f1:.4f}")
+
+        best_path = get_cached_best_model_path(force=self.force_reeval)
+        info = load_best_model_info()
+        if info:
+            iteration = info.get('iteration', 'N/A')
+            metrics = info.get('metrics', {})
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  → Best: Iteration {iteration} (F1 = {f1:.4f})")
+            else:
+                print(f"  → Best: Iteration {iteration}")
+        else:
+            print("  → Best model cached without metadata")
+
+        return best_path
     
     def load_validation_images(self):
         """Load validation image paths"""
@@ -1505,7 +1600,37 @@ class UnderwaterEffectExperiment:
         val_file = dataset_path / self.data_config['val']
         
         with open(val_file, 'r') as f:
-            self.val_images = [line.strip() for line in f if line.strip()]
+            raw_paths = [line.strip() for line in f if line.strip()]
+        
+        # Convert to absolute paths
+        self.val_images = []
+        dataset_folder_name = dataset_path.name  # e.g., "detector_dataset_simple"
+        
+        for path_str in raw_paths:
+            path = Path(path_str)
+            if not path.is_absolute():
+                # If path already starts with dataset folder name, resolve relative to parent
+                if path_str.startswith(dataset_folder_name):
+                    # Resolve relative to parent of dataset folder
+                    abs_path = (dataset_path.parent / path).resolve()
+                else:
+                    # Resolve relative to dataset folder
+                    abs_path = (dataset_path / path).resolve()
+                
+                if not abs_path.exists():
+                    # Try resolving relative to val.txt location
+                    abs_path = (val_file.parent / path).resolve()
+                if not abs_path.exists():
+                    # Try as absolute path directly
+                    abs_path = path.resolve()
+                path = abs_path
+            else:
+                path = path.resolve()
+            
+            if path.exists():
+                self.val_images.append(str(path))
+            else:
+                print(f"Warning: Validation image not found: {path}")
         
         print(f"Loaded {len(self.val_images)} validation images")
     
@@ -1568,42 +1693,93 @@ class UnderwaterEffectExperiment:
         
         # Create directory structure
         level_dir = self.experiment_dir / f"level_{level}"
+        if level_dir.exists():
+            shutil.rmtree(level_dir)
         images_dir = level_dir / "images"
         labels_dir = level_dir / "labels"
         images_dir.mkdir(parents=True, exist_ok=True)
         labels_dir.mkdir(parents=True, exist_ok=True)
         
-        # Process images
+        processed_images: List[Path] = []
         total = len(self.val_images)
-        for idx, img_path in enumerate(self.val_images):
+        for idx, img_path_str_orig in enumerate(self.val_images):
             if (idx + 1) % 20 == 0 or idx == 0 or (idx + 1) == total:
                 print(f"  Processing: {idx + 1}/{total}...")
+            
+            # CRITICAL: Construct label path from ORIGINAL string BEFORE resolve()
+            # Because .resolve() follows symlinks and changes detector_dataset_simple to detector_dataset
+            filename = Path(img_path_str_orig).name
+            label_path = None
+            
+            if 'detector_dataset_simple' in img_path_str_orig:
+                # Split on detector_dataset_simple
+                parts = img_path_str_orig.split('detector_dataset_simple', 1)
+                if len(parts) == 2:
+                    base_part = parts[0].rstrip('\\/') if parts[0] else ''
+                    # Construct absolute path to detector_dataset_simple
+                    if base_part:
+                        if Path(base_part).is_absolute():
+                            dataset_root = Path(base_part) / 'detector_dataset_simple'
+                        else:
+                            dataset_root = Path.cwd() / base_part / 'detector_dataset_simple'
+                    else:
+                        dataset_root = Path.cwd() / 'detector_dataset_simple'
+                    
+                    # Construct label path
+                    label_path = dataset_root / 'labels' / filename
+                    if label_path.suffix in ['.png', '.jpg', '.jpeg']:
+                        label_path = label_path.with_suffix('.txt')
+            
+            # Now convert image path for reading (resolve is OK for reading images)
+            img_path = Path(img_path_str_orig)
+            if not img_path.is_absolute():
+                img_path = img_path.resolve()
             
             # Read and apply effect
             img = cv2.imread(str(img_path))
             if img is None:
+                print(f"  Warning: Could not read image: {img_path}")
                 continue
             
             img_underwater = self.apply_underwater_effect(img, blue_int, green_int, haze_int, darkness)
             
             # Save processed image
-            img_name = Path(img_path).name
+            img_name = filename
             output_path = images_dir / img_name
-            cv2.imwrite(str(output_path), img_underwater)
+            success = cv2.imwrite(str(output_path), img_underwater)
+            if not success:
+                print(f"  Warning: Could not save image: {output_path}")
+                continue
+
+            processed_images.append(output_path)
+
+            # Copy label file - use pre-constructed path or fallback
+            if label_path is None:
+                # Fallback: construct from resolved path but replace detector_dataset
+                label_path = img_path.parent.parent / 'labels' / img_path.name
+                if label_path.suffix in ['.png', '.jpg', '.jpeg']:
+                    label_path = label_path.with_suffix('.txt')
+                # Replace detector_dataset with detector_dataset_simple if needed
+                label_path_str = str(label_path)
+                if 'detector_dataset' in label_path_str and 'detector_dataset_simple' not in label_path_str:
+                    label_path_str = label_path_str.replace('detector_dataset', 'detector_dataset_simple')
+                    label_path = Path(label_path_str)
             
-            # Copy label file
-            label_path = str(img_path).replace('images', 'labels').replace('.png', '.txt')
-            if Path(label_path).exists():
-                label_name = Path(label_path).name
-                shutil.copy(label_path, labels_dir / label_name)
+            # Only copy if label exists and is from detector_dataset_simple
+            if label_path.exists() and label_path.is_file() and 'detector_dataset_simple' in str(label_path):
+                label_name = label_path.name
+                shutil.copy(str(label_path), str(labels_dir / label_name))
+            else:
+                print(f"  Warning: Could not find valid label file for {filename} (expected: {label_path})")
+        
+        if not processed_images:
+            raise RuntimeError(f"No images were processed for underwater level {level}")
         
         # Create val.txt
         val_txt = level_dir / "val.txt"
         with open(val_txt, 'w') as f:
-            for img_path in self.val_images:
-                img_name = Path(img_path).name
-                new_path = images_dir / img_name
-                f.write(f"{new_path}\n")
+            for processed_path in processed_images:
+                f.write(f"{processed_path}\n")
         
         # Create data.yaml
         data_yaml = level_dir / "data.yaml"
@@ -1711,7 +1887,7 @@ class UnderwaterEffectExperiment:
         
         # Plot 1: Degradation curves
         fig, ax = plt.subplots(figsize=(12, 7))
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+        colors = ['#2E86AB', '#E15759', '#76B041', '#F28E2B', '#9467BD']
         
         for i, (metric, label) in enumerate(zip(metrics, metric_labels)):
             values = degradation_data[metric]
@@ -1916,9 +2092,10 @@ class UnderwaterEffectExperiment:
 class Visualizer:
     """Generate visualizations of predictions and ground truth"""
     
-    def __init__(self, show_conf: float, show_iou: float, force_reeval: bool = False):
+    def __init__(self, show_conf: float, show_iou: float, show_model: str, force_reeval: bool = False):
         self.show_conf = show_conf
         self.show_iou = show_iou
+        self.show_model = show_model
         self.force_reeval = force_reeval
         self.vis_dir = RESULTS_DIR / "vis"
         self.preds_dir = self.vis_dir / "PREDs"
@@ -1938,54 +2115,73 @@ class Visualizer:
         self.class_names = {int(k): v for k, v in self.class_names.items()}
         self.num_classes = self.data_config['nc']
         
-        # Find best model
-        self.best_model_path = self.find_best_model()
-        self.model = YOLO(str(self.best_model_path))
+        # Resolve requested visualization model
+        self.model_path, self.model_label = self.resolve_model_path()
+        self.model = YOLO(str(self.model_path))
         
         # Load validation images
         self.load_validation_images()
         
         # Colors for classes (BGR format for OpenCV)
         self.colors = [
-            (0, 0, 255), (0, 255, 0), (255, 0, 0), (0, 255, 255), (255, 0, 255),
-            (255, 255, 0), (0, 165, 255), (128, 0, 128), (203, 192, 255), (0, 0, 139),
-            (128, 128, 128), (0, 0, 0), (255, 255, 255), (0, 128, 0), (128, 0, 0),
-            (0, 215, 255), (180, 105, 255), (50, 205, 50), (255, 20, 147), (255, 140, 0),
-            (0, 191, 255), (255, 69, 0), (138, 43, 226), (220, 20, 60), (0, 250, 154)
+            (60, 60, 180), (60, 120, 200), (60, 170, 120), (80, 60, 200), (180, 60, 60),
+            (40, 100, 160), (100, 40, 160), (40, 160, 100), (160, 40, 120), (100, 160, 60),
+            (60, 90, 150), (90, 60, 150), (60, 150, 90), (150, 60, 90), (90, 150, 60),
+            (80, 80, 160), (80, 140, 160), (80, 160, 120), (120, 80, 160), (160, 80, 80),
+            (50, 110, 170), (110, 50, 170), (50, 170, 110), (170, 50, 120), (110, 170, 50)
         ]
     
-    def find_best_model(self) -> Path:
-        """Find the best model based on F1 score"""
-        best_f1 = -1
-        best_iteration = None
-        
+    def resolve_model_path(self) -> Tuple[Path, str]:
+        """Resolve which model weights to use for visualization"""
+        selection = self.show_model.strip().lower()
+
+        if selection != "best":
+            try:
+                iteration = int(selection)
+            except ValueError:
+                raise ValueError(f"Invalid show_model value '{self.show_model}'. Use 'best' or an iteration number.")
+
+            folder_name = MODEL_FOLDERS.get(iteration)
+            if folder_name is None:
+                raise ValueError(f"Iteration {iteration} is not configured in MODEL_FOLDERS.")
+
+            model_folder = TRAINED_MODELS_DIR / folder_name
+            candidates = [
+                model_folder / "weights" / "best.pt",
+                model_folder / "best.pt",
+            ]
+            for path in candidates:
+                if path.exists():
+                    return path, f"Iteration {iteration}"
+            raise FileNotFoundError(f"Could not find best.pt for iteration {iteration}")
+
         print("\nFinding best model for visualization...")
-        for i in range(4):
-            metrics_file = RESULTS_DIR / f"model_{i}" / "metrics.json"
-            if metrics_file.exists():
-                with open(metrics_file, 'r') as f:
-                    metrics = json.load(f)
-                    f1 = metrics.get('f1', 0)
-                    if f1 > best_f1:
-                        best_f1 = f1
-                        best_iteration = i
-        
-        if best_iteration is None:
+        iterations = get_iterations_for_analysis()
+        if not iterations:
             raise FileNotFoundError("No model results found. Run model comparison first!")
-        
-        print(f"  -> Best: Iteration {best_iteration} (F1 = {best_f1:.4f})")
-        
-        model_folder = TRAINED_MODELS_DIR / str(best_iteration)
-        possible_paths = [
-            model_folder / "weights" / "best.pt",
-            model_folder / "best.pt",
-        ]
-        
-        for path in possible_paths:
-            if path.exists():
-                return path
-        
-        raise FileNotFoundError(f"Could not find best.pt for iteration {best_iteration}")
+
+        for iteration in iterations:
+            metrics = load_iteration_metrics(iteration)
+            if not metrics:
+                continue
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  Model {iteration}: F1 = {f1:.4f}")
+
+        best_path = get_cached_best_model_path(force=self.force_reeval)
+        info = load_best_model_info()
+        if info:
+            iteration = info.get('iteration', 'N/A')
+            metrics = info.get('metrics', {})
+            f1 = metrics.get('f1')
+            if isinstance(f1, (int, float)):
+                print(f"  → Best: Iteration {iteration} (F1 = {f1:.4f})")
+            else:
+                print(f"  → Best: Iteration {iteration}")
+        else:
+            print("  → Best model cached without metadata")
+
+        return best_path, "Best"
     
     def load_validation_images(self):
         """Load validation image paths"""
@@ -2009,7 +2205,7 @@ class Visualizer:
             current_params = {
                 'show_conf': self.show_conf,
                 'show_iou': self.show_iou,
-                'best_model': str(self.best_model_path),
+                'model_path': str(self.model_path),
                 'augment': True,
             }
             
@@ -2022,7 +2218,7 @@ class Visualizer:
         params = {
             'show_conf': self.show_conf,
             'show_iou': self.show_iou,
-            'best_model': str(self.best_model_path),
+            'model_path': str(self.model_path),
             'augment': True,
         }
         
@@ -2080,7 +2276,7 @@ class Visualizer:
         print("\n" + "="*60)
         print("GENERATING VISUALIZATIONS")
         print("="*60)
-        print(f"Best model: {self.best_model_path}")
+        print(f"Model for visualization: {self.model_label} ({self.model_path})")
         print(f"Show conf: {self.show_conf}")
         print(f"Show IoU: {self.show_iou}")
         
@@ -2148,11 +2344,20 @@ class Visualizer:
             # Save predictions visualization
             cv2.imwrite(str(self.preds_dir / img_name), img_preds)
             
-            # Load ground truth
-            label_path = str(img_path).replace('images', 'labels').replace('.png', '.txt')
+            # Load ground truth - find label relative to image path properly
+            label_path = img_path.parent.parent / 'labels' / img_path.name
+            if label_path.suffix in ['.png', '.jpg', '.jpeg']:
+                label_path = label_path.with_suffix('.txt')
+            
+            if not label_path.exists():
+                # Try alternative: replace 'images' with 'labels' in path string
+                label_path_alt = Path(str(img_path).replace('images', 'labels').replace('.png', '.txt').replace('.jpg', '.txt').replace('.jpeg', '.txt'))
+                if label_path_alt.exists():
+                    label_path = label_path_alt
+            
             gt_boxes = []
             
-            if Path(label_path).exists():
+            if label_path.exists():
                 with open(label_path, 'r') as f:
                     for line in f:
                         parts = line.strip().split()
@@ -2182,6 +2387,110 @@ class Visualizer:
         print(f"Ground Truth: {self.gts_dir}")
 
 
+def get_iteration_weight_path(iteration: int) -> Optional[Path]:
+    folder_name = MODEL_FOLDERS.get(iteration)
+    if folder_name is None:
+        return None
+    model_folder = TRAINED_MODELS_DIR / folder_name
+    candidates = [
+        model_folder / "weights" / "best.pt",
+        model_folder / "best.pt",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def get_iteration_metrics_path(iteration: int) -> Path:
+    return RESULTS_DIR / f"model_{iteration}" / "metrics.json"
+
+
+def get_iterations_with_weights() -> List[int]:
+    return sorted(i for i in MODEL_FOLDERS if get_iteration_weight_path(i))
+
+
+def get_iterations_with_metrics() -> List[int]:
+    return sorted(i for i in MODEL_FOLDERS if get_iteration_metrics_path(i).exists())
+
+
+def get_iterations_for_analysis() -> List[int]:
+    return sorted(set(get_iterations_with_weights()) | set(get_iterations_with_metrics()))
+
+
+def load_iteration_metrics(iteration: int) -> Optional[Dict]:
+    metrics_path = get_iteration_metrics_path(iteration)
+    if not metrics_path.exists():
+        return None
+    with open(metrics_path, 'r') as f:
+        return json.load(f)
+
+
+def determine_best_model(iterations: Optional[List[int]] = None) -> Tuple[int, Dict]:
+    iterations = iterations or get_iterations_for_analysis()
+    best_iteration = None
+    best_metrics = None
+    best_f1 = -1.0
+    for iteration in iterations:
+        metrics = load_iteration_metrics(iteration)
+        if not metrics:
+            continue
+        f1 = metrics.get('f1', -1)
+        if f1 is None:
+            continue
+        if f1 > best_f1:
+            best_f1 = f1
+            best_iteration = iteration
+            best_metrics = metrics
+    if best_iteration is None or best_metrics is None:
+        raise FileNotFoundError("No metrics available to determine best model.")
+    return best_iteration, best_metrics
+
+
+def cache_best_model(iteration: int, metrics: Dict) -> Path:
+    weight_path = get_iteration_weight_path(iteration)
+    if weight_path is None:
+        raise FileNotFoundError(f"Best model weights not found for iteration {iteration}")
+    BEST_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    cached_path = BEST_MODEL_DIR / "best.pt"
+    shutil.copy2(weight_path, cached_path)
+    info = {
+        'iteration': iteration,
+        'source_weight': str(weight_path),
+        'cached_weight': str(cached_path),
+        'metrics': metrics,
+    }
+    with open(BEST_INFO_PATH, 'w') as f:
+        json.dump(info, f, indent=2)
+    return cached_path
+
+
+def get_cached_best_model_path(force: bool = False) -> Path:
+    if not force and BEST_INFO_PATH.exists():
+        with open(BEST_INFO_PATH, 'r') as f:
+            info = json.load(f)
+        cached_path = Path(info.get('cached_weight', BEST_MODEL_DIR / 'best.pt'))
+        if cached_path.exists():
+            return cached_path
+    iteration, metrics = determine_best_model()
+    return cache_best_model(iteration, metrics)
+
+
+def update_best_model_from_results(results: Dict[int, Dict]) -> None:
+    if not results:
+        return
+    best_iteration = max(results, key=lambda k: results[k].get('f1', -1))
+    metrics = results[best_iteration]
+    cache_best_model(best_iteration, metrics)
+
+
+def load_best_model_info() -> Optional[Dict]:
+    if BEST_INFO_PATH.exists():
+        with open(BEST_INFO_PATH, 'r') as f:
+            return json.load(f)
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare trained models and run experiments")
     parser.add_argument("--conf", type=float, default=0.001, 
@@ -2196,6 +2505,8 @@ def main():
                        help="Force re-evaluation even if results exist")
     parser.add_argument("--experiment", choices=['gaussian', 'underwater', 'tta', 'all'], default=None,
                        help="Run experiment: 'gaussian'=blur test, 'underwater'=underwater effect, 'tta'=augmentation consistency, 'all'=comparison+all experiments")
+    parser.add_argument("--show_model", default="best",
+                       help="Model to visualize: 'best' or iteration number (e.g., 0,1,2,3,4)")
     
     args = parser.parse_args()
     
@@ -2210,11 +2521,6 @@ def main():
         print(f"Force re-evaluation: YES")
     
     try:
-        # Always run visualizations first (with parameter checking)
-        visualizer = Visualizer(show_conf=args.show_conf, show_iou=args.show_iou, 
-                               force_reeval=args.force)
-        visualizer.run()
-        
         # Run model comparison if no experiment specified or if 'all'
         if args.experiment is None or args.experiment == 'all':
             print("\n" + "="*60)
@@ -2250,6 +2556,11 @@ def main():
             tta_exp = AugmentationConsistencyExperiment(conf_threshold=args.conf, iou_threshold=args.iou,
                                                        force_reeval=args.force)
             tta_exp.run()
+        
+        # Always run visualizations last (after model comparison creates metrics)
+        visualizer = Visualizer(show_conf=args.show_conf, show_iou=args.show_iou, 
+                               show_model=args.show_model, force_reeval=args.force)
+        visualizer.run()
         
         print("\n" + "="*60)
         print("ALL TASKS COMPLETE!")
