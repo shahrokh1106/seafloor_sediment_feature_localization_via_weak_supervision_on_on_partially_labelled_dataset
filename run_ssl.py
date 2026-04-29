@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple launcher for SSL Weakly Supervised Pipeline
+Simple launcher for Weakly Supervised Pipeline
 
 Usage:
     python run_ssl.py
@@ -38,7 +38,7 @@ def main():
     # Verify prerequisites
     if not Path(TEACHER_MODEL).exists():
         logger.error(f"Teacher model not found: {TEACHER_MODEL}")
-        logger.error("Please complete full initial training with VarifocalLoss first:")
+        logger.error("Please complete full initial training with first:")
         logger.error("  python initial_training.py")
         logger.error(f"  Expected: {TEACHER_MODEL}")
         return False
