@@ -1,25 +1,46 @@
-# Annotation Acceleration Setup (DINOv3)
+# Annotation Acceleration Setup
 
-The annotation acceleration workflow in this `feature_matching_scripts/` folder is built on top of the official **DINOv3** implementation from Meta AI.
+Shared code lives in `feature_matching_scripts/`:
+- `utils.py` — box→similarity→affinity pipeline
+- `dinov3/` — local Meta DINOv3 clone + weights
 
-Repository:
-- [https://github.com/facebookresearch/dinov3](https://github.com/facebookresearch/dinov3)
+Demos live in `feature_matching_scripts/test/`:
+- `images/` — input images
+- `output/` — saved visualizations
+- `dinov3test.py` / `sam3test.py`
 
-## Important Dependency
+Run demos from the `test/` folder.
 
-Before running scripts in this folder (for example `dinov3test.py`), you should clone and install the official DINOv3 repository according to its setup instructions.
+---
 
-## Recommended Steps
+# DINOv3 Setup (local Meta clone)
 
-1. Clone DINOv3:
-   ```bash
-   git clone https://github.com/facebookresearch/dinov3.git
-   ```
-2. Follow the installation instructions in the official repository (environment, dependencies, model weights, etc.).
-3. Ensure the local path expected by this project is available (the scripts currently reference `dinov3` as a local repository directory).
-4. Run this project's DINO-based scripts only after DINOv3 is installed correctly.
+`test/dinov3test.py` extracts dense features with Meta DINOv3 via `torch.hub.load`
+(`get_intermediate_layers`), then runs the shared similarity / affinity mask flow.
 
-## Notes
+Repository: https://github.com/facebookresearch/dinov3
 
-- This project uses DINOv3 feature extraction as the backbone for annotation acceleration utilities.
-- If setup is incomplete, model loading via `torch.hub.load(...)` in the local scripts may fail.
+```bash
+git clone https://github.com/facebookresearch/dinov3.git
+# follow the official install steps, then place pretrained weights where the script expects:
+#   feature_matching_scripts/dinov3/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth
+```
+
+1. Clone into `feature_matching_scripts/dinov3`
+2. Install per the DINOv3 README and download the ViT-L/16 weights
+3. From `feature_matching_scripts/test/`: `python dinov3test.py`
+
+---
+
+# SAM3 Setup (Hugging Face transformers)
+
+`test/sam3test.py` uses the same box→similarity→affinity pipeline as `dinov3test.py`,
+but pulls dense backbone features from Hugging Face SAM3 (`get_vision_features`).
+
+```bash
+pip install "transformers>=5.0.0"
+hf auth login
+```
+
+1. Request access: https://huggingface.co/facebook/sam3
+2. From `feature_matching_scripts/test/`: `python sam3test.py`
