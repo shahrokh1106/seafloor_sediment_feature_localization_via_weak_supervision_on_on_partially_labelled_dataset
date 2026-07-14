@@ -17,14 +17,14 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 os.environ['PYTHONHASHSEED'] = str(SEED)
 
-DATASET_PATH = "output"
+DATASET_PATH = os.path.join("test","output")
 os.makedirs(DATASET_PATH, exist_ok=True)
 PATCH_SIZE = 16
 IMAGE_SIZE = 512
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE_str = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_ID = "facebook/sam3"
-IMG_PATH = os.path.join("images", "b.jpg")
+IMG_PATH = os.path.join("test","images", "b.jpg")
 DEBUG = True
 OUTPUT = {}
 OUTPUTSIZE = IMAGE_SIZE // 2
