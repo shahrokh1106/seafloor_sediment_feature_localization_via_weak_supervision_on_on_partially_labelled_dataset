@@ -24,7 +24,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE_str = "cuda" if torch.cuda.is_available() else "cpu"
 REPO_DIR = str(ROOT / "dinov3")
 WEIGHTS = str(ROOT / "dinov3" / "dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth")
-IMG_PATH = os.path.join("test","images", "b.jpg")
+IMG_PATH = os.path.join("test","images", "a.png")
 DEBUG = True
 OUTPUT = {}
 OUTPUTSIZE = IMAGE_SIZE // 2
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     OUTPUT.update({"overlay_mask_box": overlay_mask_box})
 
     # Extract bounding boxes from mask using connected component analysis
-    boxes, num_boxes, component_stats = get_bounding_boxes_from_mask(mask_box, min_area=100)
+    boxes, num_boxes, component_stats = get_bounding_boxes_from_mask(mask_box, min_area=500)
     print(f"Found {num_boxes} bounding boxes from mask")
 
     # Visualize bounding boxes on original image

@@ -152,57 +152,90 @@ def get_roi(image,show_scale = 300):
     
 
 
-def get_sim_map_box(path,x, inputsize,patchsize,show_scale,debug, cmap=cv2.COLORMAP_INFERNO):
-    image_bgr = cv2.imread(path)
-    image_bgr = cv2.resize(image_bgr, (inputsize, inputsize))
-    box_org = get_roi(image_bgr,show_scale = show_scale)
-    box = [b//patchsize for b in box_org]
-    x1,y1,x2,y2 = box
-    feats = x[0].detach().cpu().numpy()  
-    box_features = feats[:,y1:y2, x1:x2]
-    box_features = box_features.mean(axis=(1, 2)) 
-    C, H, W = feats.shape
-    feats = feats.reshape(C,H*W)
-    #L2
-    feats /= (np.linalg.norm(feats, axis=0, keepdims=True) + 1e-8)
-    box_features /= (np.linalg.norm(box_features) + 1e-8)
-    sim = box_features.T@feats
-    sim_map = sim.reshape(H,W)
-    
-    # Normalize similarity map to [0,1] for mask generation
-    sim_map_normalized = (sim_map - sim_map.min()) / (sim_map.max() - sim_map.min() + 1e-8)
-    
-    # use percentile-based normalization to reduce impact of selected box
-    # This makes other similar regions more visible while keeping the selected box visible
-    sim_flat = sim_map.flatten()
-    # Use 95th percentile as max for visualization (excludes extreme outliers like the selected box)
-    p95 = np.percentile(sim_flat, 95)
-    p5 = np.percentile(sim_flat, 5)
-    
-    # Create visualization map with percentile-based normalization
-    sim_vis = np.clip(sim_map, p5, p95)
-    sim_vis = (sim_vis - p5) / (p95 - p5 + 1e-8)
-    
-    # Apply gamma correction (power scaling) to enhance contrast for medium similarity values
-    # This makes similar regions more distinct while preserving the selected box visibility
-    gamma = 0.7  # Values < 1 enhance contrast for lower values
-    sim_vis = np.power(sim_vis, gamma)
-    
-    # Convert to uint8 for colormap
-    sim_map_normalized = sim_vis.copy()
-    mean_vis = (sim_vis * 255).astype(np.uint8)
-    mean_vis = cv2.applyColorMap(mean_vis, cmap) 
-    mean_vis = cv2.resize(mean_vis, (inputsize, inputsize))
-    
-    w = int(mean_vis.shape[1] * show_scale / 100)
-    h = int(mean_vis.shape[0] * show_scale / 100)
-    mean_vis_show = cv2.resize(mean_vis, (w, h), interpolation = cv2.INTER_AREA)
+def get_sim_map_box(path, x, inputsize, patchsize, show_scale, debug, cmap=cv2.COLORMAP_INFERNO, box_org=None):
+    """
+    Cosine-similarity map from a seed box on dense features x [1,C,Hp,Wp].
+
+    DINOv3-style matching: single seed prototype from the patch that contains
+    the geometric center of the drawn box (pixel center → patch index).
+    Avoids averaging background and avoids centering on the snapped patch
+    rectangle (floor/ceil corners), which can shift the query patch.
+
+    box_org: optional [x1,y1,x2,y2] in *inputsize* pixel coords.
+             If None, opens interactive ROI (demo path).
+
+    Returns:
+        mean_vis: colormap visualization at inputsize
+        sim_map:  normalized cosine map at inputsize (for affinity/mask)
+        box_org:  seed box used [x1,y1,x2,y2]
+    """
+    # box_org = [288, 333, 307, 361]
+    if box_org is None:
+        image_bgr = cv2.imread(path)
+        if image_bgr is None:
+            raise FileNotFoundError(f"Could not read image: {path}")
+        image_bgr = cv2.resize(image_bgr, (inputsize, inputsize))
+        box_org = get_roi(image_bgr, show_scale=show_scale)
+        print(f"Selected box: {box_org}")
+    else:
+        x1, y1, x2, y2 = box_org
+        x1, x2 = sorted((int(round(x1)), int(round(x2))))
+        y1, y2 = sorted((int(round(y1)), int(round(y2))))
+        x1 = max(0, min(inputsize - 1, x1))
+        x2 = max(0, min(inputsize - 1, x2))
+        y1 = max(0, min(inputsize - 1, y1))
+        y2 = max(0, min(inputsize - 1, y2))
+        box_org = [x1, y1, x2, y2]
+        
+
+
+    feat = x[0].detach().float().clone()  # [C, Hp, Wp]
+    C, Hp, Wp = feat.shape
+
+    # Pixel-box center → patch that contains that point
+    cx = 0.5 * (box_org[0] + box_org[2])
+    cy = 0.5 * (box_org[1] + box_org[3])
+    cx_p = int(np.floor(cx / patchsize))
+    cy_p = int(np.floor(cy / patchsize))
+    cx_p = max(0, min(Wp - 1, cx_p))
+    cy_p = max(0, min(Hp - 1, cy_p))
+
+    # --- dense cosine: that single patch as prototype ---
+    proto = F.normalize(feat[:, cy_p, cx_p], dim=0, eps=1e-8)  # [C]
+    flat = F.normalize(feat.reshape(C, -1), dim=0, eps=1e-8)  # [C, HW]
+    sim_map = torch.matmul(proto, flat).reshape(Hp, Wp)
+    sim_map = sim_map.detach().cpu().numpy().astype(np.float32)
+    sim_local = sim_map.copy()
+
+    # Percentile normalize the contrast map (shared by viz + affinity)
+    flat_l = sim_local.reshape(-1)
+    p5 = float(np.percentile(flat_l, 5))
+    p95 = float(np.percentile(flat_l, 95))
+    if p95 - p5 < 1e-8:
+        # fallback if contrast map is nearly flat
+        p5 = float(sim_map.min())
+        p95 = float(sim_map.max())
+        sim_norm = (sim_map - p5) / (p95 - p5 + 1e-8)
+    else:
+        sim_norm = (sim_local - p5) / (p95 - p5 + 1e-8)
+    sim_norm = np.clip(sim_norm, 0.0, 1.0).astype(np.float32)
+    sim_norm  = sim_local.copy()
+
+    mean_vis = (sim_norm * 255).astype(np.uint8)
+    mean_vis = cv2.applyColorMap(mean_vis, cmap)
+    mean_vis = cv2.resize(mean_vis, (inputsize, inputsize), interpolation=cv2.INTER_LINEAR)
+    sim_for_mask_up = cv2.resize(sim_norm, (inputsize, inputsize), interpolation=cv2.INTER_LINEAR)
+    sim_for_mask_up = np.clip(sim_for_mask_up, 0.0, 1.0).astype(np.float32)
+
     if debug:
-        cv2.imshow("DINO FEATURES", mean_vis_show); cv2.waitKey(0)
+        w = int(mean_vis.shape[1] * show_scale / 100)
+        h = int(mean_vis.shape[0] * show_scale / 100)
+        mean_vis_show = cv2.resize(mean_vis, (w, h), interpolation=cv2.INTER_AREA)
+        cv2.imshow("mean_vis_show", mean_vis_show)
+        cv2.waitKey(0)
         cv2.destroyAllWindows()
-    
-    # Return normalized similarity map (full range) for mask generation
-    return mean_vis, cv2.resize(sim_map_normalized, (inputsize,inputsize)), box_org
+
+    return mean_vis, sim_for_mask_up, box_org
 
 def random_walk_refine(Y0, affinity, alpha=0.5, num_iter=10):
     """
@@ -275,10 +308,10 @@ def get_affinity_mask(sim_map, image_embedding_high, device, show_scale, debug, 
     Strategy (as claimed):
     1. Interpret the similarity map S as a soft two-channel mask (fg=S, bg=1-S)
     2. Propagate along feature affinity with a normalized random walk
-    3. Binarize refined foreground probabilities with percentile-based thresholding
+    3. Detrend refined FG (subtract blur halo) then percentile-threshold the residual
 
     Args:
-        mask_percentile: percentile of refined fg probs used as the binary threshold (default 70)
+        mask_percentile: percentile of detrended FG used as the binary threshold (default 70)
     """
     sim_map_np = np.asarray(sim_map, dtype=np.float32).copy()
     sim_map_np = np.clip(sim_map_np, 0.0, 1.0)
@@ -322,7 +355,7 @@ def get_affinity_mask(sim_map, image_embedding_high, device, show_scale, debug, 
     ).permute(0, 2, 3, 1)
 
     # Step 3: Affinity-based random walk propagation
-    refined_mask_soft = random_walk_refine(sim_map_tensor, affinity_map, alpha=0.35, num_iter=8)
+    refined_mask_soft = random_walk_refine(sim_map_tensor, affinity_map, alpha=0.3, num_iter=8)
 
     # Step 4: Foreground probability after refinement
     refined_mask_prob = refined_mask_soft[0, 1].detach().cpu().numpy()
@@ -338,18 +371,46 @@ def get_affinity_mask(sim_map, image_embedding_high, device, show_scale, debug, 
         cv2.destroyAllWindows()
 
     
-    # Step 5 : adaptive percentile-based thresholding → binary pseudo-mask
-    final_threshold = float(np.percentile(refined_mask_prob, mask_percentile))
-    refined_mask = (refined_mask_prob > final_threshold).astype(np.uint8) * 255
-    kernel_small = np.ones((3, 3), np.uint8)
-    refined_mask = cv2.morphologyEx(refined_mask, cv2.MORPH_OPEN, kernel_small, iterations=1)  # Remove small noise
-    refined_mask = cv2.morphologyEx(refined_mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)  # Fill small gaps
+    # Step 5: adaptive detrend → threshold
+    # Seed is the global peak and dominates a smooth halo; subtract that low-frequency
+    # trend so secondary peaks compete, then percentile-threshold the residual.
+    H, W = refined_mask_prob.shape
+    k = max(31, (min(H, W) // 8) | 1)  # odd; ~seed-halo scale
+
+    trend = cv2.GaussianBlur(refined_mask_prob, (k, k), sigmaX=0)
+    detrended = np.maximum(refined_mask_prob - trend, 0.0).astype(np.float32)
+
+    if float(detrended.max()) < 1e-8:
+        # Detrend removed all signal — threshold the raw refined map instead.
+        score = refined_mask_prob
+        final_threshold = float(np.percentile(score, mask_percentile))
+    else:
+        score = detrended
+        final_threshold = float(np.percentile(score, mask_percentile))
+        if final_threshold <= 1e-8:
+            # Sparse residual: most pixels are 0, so the global percentile collapses to 0.
+            # Threshold only over positive peaks; use a slightly lower percentile so we
+            # do not wipe secondary detections when mask_percentile is very high.
+            pos = score[score > 0]
+            if pos.size > 0:
+                pos_pct = max(50, mask_percentile - 30)
+                final_threshold = float(np.percentile(pos, pos_pct))
+            else:
+                score = refined_mask_prob
+                final_threshold = float(np.percentile(score, mask_percentile))
+
+    refined_mask = (score > final_threshold).astype(np.uint8) * 255
+    kernel_small = np.ones((5, 5), np.uint8)
+    refined_mask = cv2.morphologyEx(refined_mask, cv2.MORPH_OPEN, kernel_small, iterations=1)
+    refined_mask = cv2.morphologyEx(refined_mask, cv2.MORPH_CLOSE, kernel_small, iterations=1)
 
     if debug:
+        det_vis = (np.clip(score / (score.max() + 1e-8), 0, 1) * 255).astype(np.uint8)
+        det_vis = cv2.applyColorMap(det_vis, cmap)
         w = int(refined_mask.shape[1] * show_scale / 100)
         h = int(refined_mask.shape[0] * show_scale / 100)
-        refined_mask_vis = cv2.resize(refined_mask, (w, h), interpolation=cv2.INTER_AREA)
-        cv2.imshow("DINO FEATURES", refined_mask_vis)
+        cv2.imshow("step5_detrended_score", cv2.resize(det_vis, (w, h), interpolation=cv2.INTER_AREA))
+        cv2.imshow("refined_mask_vis", cv2.resize(refined_mask, (w, h), interpolation=cv2.INTER_AREA))
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
@@ -368,7 +429,7 @@ def get_overlay_heatmap(sim_map,img_org,debug,show_scale):
         w = int(overlay.shape[1] * show_scale / 100)
         h = int(overlay.shape[0] * show_scale / 100)
         overlay_vis = cv2.resize(overlay, (w, h), interpolation = cv2.INTER_AREA)
-        cv2.imshow("DINO FEATURES", overlay_vis); cv2.waitKey(0)
+        cv2.imshow("overlay_vis", overlay_vis); cv2.waitKey(0)
         cv2.destroyAllWindows()
     return overlay
 

@@ -1,0 +1,84 @@
+{
+  "generated_at": "2026-07-20T00:56:24.775161+00:00",
+  "mode": "global",
+  "settings": {
+    "mode": "global",
+    "IMAGE_SIZE": 512,
+    "PATCH_SIZE": 16,
+    "MASK_PERCENTILE": 95,
+    "MIN_AREA": 200,
+    "SEED_DUP_IOU": 0.3,
+    "SEED_COVER": 0.5,
+    "CLASS_ID": 0,
+    "IOU_THRESHOLDS": [
+      0.5,
+      0.75
+    ]
+  },
+  "labels_dino": "C:\\Users\\IVSLab\\Desktop\\ai-sediment\\detection\\feature_matching_scripts\\dataset_burrow\\labels_dino_global",
+  "labels_sam": "C:\\Users\\IVSLab\\Desktop\\ai-sediment\\detection\\feature_matching_scripts\\dataset_burrow\\labels_sam_global",
+  "dino": {
+    "images": 350,
+    "gt_boxes": 8784,
+    "pred_boxes": 7009,
+    "avg_gt_per_img": 25.097142857142856,
+    "avg_pred_per_img": 20.025714285714287,
+    "map": 0.034638967365026474,
+    "map_50": 0.14612160623073578,
+    "map_75": 0.004028939176350832,
+    "mar_100": 0.11534608155488968,
+    "mean_best_iou_gt": 0.31877604126930237,
+    "mean_best_iou_pred": 0.39610832929611206,
+    "mean_matched_iou_50": 0.648125946521759,
+    "by_thr": {
+      "0.50": {
+        "tp": 2907,
+        "fp": 4102,
+        "fn": 5877,
+        "precision": 0.41475246112141534,
+        "recall": 0.33094262295081966,
+        "f1": 0.3681377825618945
+      },
+      "0.75": {
+        "tp": 470,
+        "fp": 6539,
+        "fn": 8314,
+        "precision": 0.06705664146097874,
+        "recall": 0.053506375227686705,
+        "f1": 0.059520040524282905
+      }
+    }
+  },
+  "sam": {
+    "images": 350,
+    "gt_boxes": 8784,
+    "pred_boxes": 6352,
+    "avg_gt_per_img": 25.097142857142856,
+    "avg_pred_per_img": 18.14857142857143,
+    "map": 0.016117949038743973,
+    "map_50": 0.07772790640592575,
+    "map_75": 0.0015142009360715747,
+    "mar_100": 0.07124316692352295,
+    "mean_best_iou_gt": 0.24648809432983398,
+    "mean_best_iou_pred": 0.33637797832489014,
+    "mean_matched_iou_50": 0.6328344345092773,
+    "by_thr": {
+      "0.50": {
+        "tp": 1968,
+        "fp": 4384,
+        "fn": 6816,
+        "precision": 0.30982367758186397,
+        "recall": 0.22404371584699453,
+        "f1": 0.26004228329809725
+      },
+      "0.75": {
+        "tp": 256,
+        "fp": 6096,
+        "fn": 8528,
+        "precision": 0.04030226700251889,
+        "recall": 0.029143897996357013,
+        "f1": 0.03382663847780126
+      }
+    }
+  }
+}

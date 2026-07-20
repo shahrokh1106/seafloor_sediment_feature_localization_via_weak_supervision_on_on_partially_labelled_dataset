@@ -24,7 +24,7 @@ IMAGE_SIZE = 512
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DEVICE_str = "cuda" if torch.cuda.is_available() else "cpu"
 MODEL_ID = "facebook/sam3"
-IMG_PATH = os.path.join("test","images", "b.jpg")
+IMG_PATH = os.path.join("test","images", "d.jpg")
 DEBUG = True
 OUTPUT = {}
 OUTPUTSIZE = IMAGE_SIZE // 2
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     OUTPUT.update({"mask_box_binary": (mask_box).astype(np.uint8)})
     OUTPUT.update({"overlay_mask_box": overlay_mask_box})
 
-    boxes, num_boxes, component_stats = get_bounding_boxes_from_mask(mask_box, min_area=100)
+    boxes, num_boxes, component_stats = get_bounding_boxes_from_mask(mask_box, min_area=500)
     print(f"Found {num_boxes} bounding boxes from mask")
 
     image_bgr_full = cv2.imread(IMG_PATH)
