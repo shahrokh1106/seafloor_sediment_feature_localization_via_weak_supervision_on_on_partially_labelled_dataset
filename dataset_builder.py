@@ -61,8 +61,6 @@ class SnapshotDatasetBuilder:
         Returns:
             snapshot_yaml: Path to snapshot data.yaml
             
-        Note:
-            No class balancing is applied - VFL loss handles class imbalance naturally.
         """
         logger.info(f"Building snapshot dataset for iteration {iteration}...")
         

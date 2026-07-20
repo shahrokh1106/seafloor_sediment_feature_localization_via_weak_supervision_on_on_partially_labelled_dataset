@@ -294,9 +294,7 @@ class WeaklySupervisedPipeline:
         logger.info(f"\n{'='*60}")
         logger.info(f"ITERATION {iteration}: TRAINING STUDENT MODEL")
         logger.info(f"{'='*60}")
-        
-        # VarifocalLoss enabled in training loss - no per-class weighting needed
-        
+                
         # Initialize student from current teacher
         logger.info(f"Initializing student model from: {self.current_teacher_path}")
         logger.info(f"  Teacher path exists: {Path(self.current_teacher_path).exists()}")
@@ -335,7 +333,7 @@ class WeaklySupervisedPipeline:
             mosaic=0.5,
             close_mosaic=10,
             
-            # Loss weights (VarifocalLoss used internally)
+            # Loss weights 
             box=5.0,
             cls=1.0,
             dfl=1.5,

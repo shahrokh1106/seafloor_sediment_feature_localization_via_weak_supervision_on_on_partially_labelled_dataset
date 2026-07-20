@@ -272,7 +272,6 @@ def get_val_metrics(model_or_path, data_yaml, imgsz=960, device=0, split='val'):
     }
 
 if __name__ == "__main__":
-    print("Starting YOLO training on full dataset with VarifocalLoss...")
     print(f"Dataset: {DATASET_PATH}")
     print(f"Data YAML: {DATA_YAML_PATH}")
     print(f"Model: {MODEL_PATH}")
