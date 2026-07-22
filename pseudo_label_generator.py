@@ -13,7 +13,7 @@ Author: Refined from generate_train_boxes.py
 import json
 import numpy as np
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 from ultralytics import YOLO
 from tqdm import tqdm
 import logging
@@ -62,7 +62,9 @@ class PseudoLabelGenerator:
                               dup_iou: float = 0.25,
                               iou_nms: float = 0.5,
                               consistency_check: bool = True,
-                              consistency_iou: float = 0.7) -> Dict:
+                              consistency_iou: float = 0.7,
+                              preserve_gt: bool = True,
+                              gt_labels_dir: Optional[Path] = None) -> Dict:
         """
         Generate merged labels: GT + filtered pseudo-labels.
         
@@ -75,6 +77,10 @@ class PseudoLabelGenerator:
             iou_nms: IoU threshold for NMS
             consistency_check: If True, verify predictions with augmented image
             consistency_iou: IoU threshold for consistency check (default: 0.7)
+            preserve_gt: If True, keep existing train labels and add pseudos.
+                If False, write teacher pseudo-labels only.
+            gt_labels_dir: Optional directory of label files to merge with instead
+                of dataset/labels/ (used when accumulating prior-iteration pseudos).
             
         Returns:
             stats: Statistics dictionary
@@ -100,14 +106,26 @@ class PseudoLabelGenerator:
         
         if consistency_check:
             logger.info(f"Multi-augmentation consistency check enabled (IoU threshold: {consistency_iou})")
+        if not preserve_gt:
+            logger.info("preserve_gt=False: SSL train labels will be teacher pseudos only")
+        elif gt_labels_dir is not None:
+            logger.info(f"Merging pseudos with prior labels from: {gt_labels_dir}")
         
         for img_path in tqdm(image_paths, desc="Generating pseudo-labels"):
             img_path = Path(img_path)
             
-            # Read ground truth labels
-            gt_label_path = self._derive_label_path(img_path)
-            gts = self._read_gt_yolo_norm_xyxy(gt_label_path)
-            stats['gt_boxes'] += len(gts)
+            if preserve_gt:
+                if gt_labels_dir is not None:
+                    gt_label_path = gt_labels_dir / f"{img_path.stem}.txt"
+                else:
+                    gt_label_path = self._derive_label_path(img_path)
+            else:
+                gt_label_path = self._derive_label_path(img_path)
+            if preserve_gt:
+                gts = self._read_gt_yolo_norm_xyxy(gt_label_path)
+                stats['gt_boxes'] += len(gts)
+            else:
+                gts = []
             
             # Get predictions from teacher (disable NMS, we'll do it ourselves)
             preds = self.teacher_model.predict(
@@ -151,16 +169,20 @@ class PseudoLabelGenerator:
             if len(new_preds) > 0:
                 stats['images_with_pseudo'] += 1
             
-            # Write merged labels (GT + pseudo)
+            # Write merged labels (GT + pseudo, or pseudo-only)
             self._write_merged_labels(
                 gt_label_path,
                 new_preds,
-                output_dir / f"{img_path.stem}.txt"
+                output_dir / f"{img_path.stem}.txt",
+                preserve_gt=preserve_gt,
             )
             
             stats['images_processed'] += 1
         
         stats['total_boxes'] = stats['gt_boxes'] + stats['pseudo_boxes']
+        stats['preserve_gt'] = preserve_gt
+        if gt_labels_dir is not None:
+            stats['gt_labels_dir'] = str(gt_labels_dir)
         
         return stats
     
@@ -360,7 +382,8 @@ class PseudoLabelGenerator:
     def _write_merged_labels(self,
                            gt_label_path: Path,
                            pseudo_labels: List[Tuple],
-                           output_path: Path):
+                           output_path: Path,
+                           preserve_gt: bool = True):
         """
         Write merged labels (GT + pseudo) to file.
         
@@ -368,18 +391,18 @@ class PseudoLabelGenerator:
             gt_label_path: Path to ground truth labels
             pseudo_labels: List of (class_id, (x1,y1,x2,y2), confidence)
             output_path: Output file path
+            preserve_gt: If True, include existing labels before pseudo-labels
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
         final_lines = []
         
-        # 1. Add all ground truth labels (as-is)
-        if gt_label_path.exists():
+        if preserve_gt and gt_label_path.exists():
             with open(gt_label_path, 'r') as f:
                 gt_lines = [line.strip() for line in f if line.strip()]
             final_lines.extend(gt_lines)
         
-        # 2. Add pseudo-labels (convert xyxy to cxcywh)
+        # Add pseudo-labels (convert xyxy to cxcywh)
         for (c, (x1, y1, x2, y2), _) in pseudo_labels:
             # Convert to cxcywh
             w = max(0.0, x2 - x1)

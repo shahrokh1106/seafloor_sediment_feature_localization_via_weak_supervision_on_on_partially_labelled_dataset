@@ -63,7 +63,7 @@ AUGMENTATION_CONFIG = {
     'dfl': 1.5,
 }
 
-def train_yolo(data_yaml_path, model_path, out_dir, imgsz, epochs, batchsize, device, multi_scale):
+def train_yolo(data_yaml_path, model_path, out_dir, imgsz, epochs, batchsize, device, multi_scale, run_name="full_initial_bce"):
     """
     Train YOLO model with comprehensive augmentations for marine sediment detection.
     
@@ -136,7 +136,7 @@ def train_yolo(data_yaml_path, model_path, out_dir, imgsz, epochs, batchsize, de
         
         # Training settings
         project=str(out_dir),
-        name="full_initial_bce",
+        name=run_name,
         patience=70,         # Early stopping patience (from args.yaml)
         exist_ok=True,
         resume=False,

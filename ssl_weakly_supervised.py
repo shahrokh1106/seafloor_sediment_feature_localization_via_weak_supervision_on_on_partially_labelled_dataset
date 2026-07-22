@@ -40,6 +40,19 @@ torch.cuda.manual_seed_all(SEED)
 os.environ['PYTHONHASHSEED'] = str(SEED)
 
 
+def _set_training_seeds(seed: int) -> None:
+    """Reset RNG state before each student train (matches run_burrow.set_seeds)."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ["PYTHONHASHSEED"] = str(seed)
+
+
 class WeaklySupervisedPipeline:
     """Main pipeline for weakly supervised learning with pseudo-labeling."""
     
@@ -50,7 +63,13 @@ class WeaklySupervisedPipeline:
                  max_iterations: int = 30,
                  device: str = "auto",
                  imgsz: int = 960,
-                 batch_size: int = 8):
+                 batch_size: int = 8,
+                 preserve_gt: bool = True,
+                 conf_tune_metric: str = "f1",
+                 training_seed: Optional[int] = None,
+                 conf_tune_min: Optional[float] = None,
+                 conf_tune_max: Optional[float] = None,
+                 conf_tune_steps: int = 20):
         """
         Initialize the weakly supervised learning pipeline.
         
@@ -62,6 +81,17 @@ class WeaklySupervisedPipeline:
             device: Device for training/inference
             imgsz: Image size
             batch_size: Batch size for training
+            preserve_gt: If True (default), merge teacher pseudos with existing train
+                labels each iteration. If False, iteration 1 uses teacher pseudos
+                only; later iterations merge new pseudos with the previous iteration's
+                labels (burrow experiment mode). Main-repo runs should keep True.
+            conf_tune_metric: Metric to optimize when tuning pseudo-label confidence
+                (f1, map50, map50-95, precision, recall). Default f1 for main pipeline.
+            training_seed: If set, pass to YOLO student training and reset RNG each
+                iteration (burrow experiment). None keeps main pipeline default.
+            conf_tune_min: Lower bound for confidence sweep (default 0.2 for main).
+            conf_tune_max: Upper bound for confidence sweep (default 0.7).
+            conf_tune_steps: Number of confidence values to test.
         """
         self.initial_teacher_path = Path(initial_teacher_path)
         self.dataset_path = Path(dataset_path)
@@ -69,6 +99,12 @@ class WeaklySupervisedPipeline:
         self.max_iterations = max_iterations
         self.imgsz = imgsz
         self.batch_size = batch_size
+        self.preserve_gt = preserve_gt
+        self.conf_tune_metric = conf_tune_metric
+        self.training_seed = training_seed
+        self.conf_tune_min = 0.2 if conf_tune_min is None else conf_tune_min
+        self.conf_tune_max = 0.7 if conf_tune_max is None else conf_tune_max
+        self.conf_tune_steps = conf_tune_steps
         
         # Handle device selection
         if device == "auto":
@@ -108,7 +144,39 @@ class WeaklySupervisedPipeline:
         logger.info(f"Max iterations: {self.max_iterations}")
         logger.info(f"Device: {self.device}")
         logger.info(f"Image size: {self.imgsz}")
+        logger.info(f"Preserve train GT when merging pseudos: {self.preserve_gt}")
+        logger.info(f"Confidence tuning metric: {self.conf_tune_metric}")
+        logger.info(
+            f"Confidence tuning range: {self.conf_tune_min:.3f}–{self.conf_tune_max:.3f} "
+            f"({self.conf_tune_steps} steps)"
+        )
+        if self.training_seed is not None:
+            logger.info(f"Student training seed: {self.training_seed}")
+        if not self.preserve_gt:
+            logger.info(
+                "  Burrow mode: iter 1 = teacher-only labels; "
+                "iter 2+ = merge with previous iteration labels"
+            )
     
+    def _effective_preserve_gt(self, iteration: int) -> bool:
+        """Whether to merge existing labels when generating pseudos this iteration."""
+        if self.preserve_gt:
+            return True
+        return iteration > 1
+
+    def _gt_labels_dir_for_iteration(self, iteration: int) -> Optional[Path]:
+        """
+        Label directory to merge with when preserve_gt is effective.
+
+        Main pipeline (preserve_gt=True): dataset train labels via _derive_label_path.
+        Burrow pipeline (preserve_gt=False): previous iteration pseudo labels from iter 2+.
+        """
+        if self.preserve_gt:
+            return None
+        if iteration > 1:
+            return self.output_dir / f"pseudo_labels_iter{iteration - 1}"
+        return None
+
     def _load_splits(self) -> Tuple[List[str], List[str], List[str]]:
         """Load train/val/test splits."""
         splits = {}
@@ -149,14 +217,16 @@ class WeaklySupervisedPipeline:
             return best_conf
         
         # Define confidence range (start from very low for partially labeled data)
-        conf_values = np.round(np.linspace(0.2, 0.7, 20), 3)
+        conf_values = np.round(
+            np.linspace(self.conf_tune_min, self.conf_tune_max, self.conf_tune_steps), 3
+        )
         
         # Run tuning
         best_conf, results = tune_conf_threshold(
             model_or_path=str(self.current_teacher_path),
             data_yaml=str(self.data_yaml),
             conf_values=conf_values,
-            metric="f1", 
+            metric=self.conf_tune_metric,
             imgsz=self.imgsz,
             iou=0.7,  # High IoU for NMS to keep more boxes initially
             device=self.device,
@@ -220,6 +290,8 @@ class WeaklySupervisedPipeline:
         )
         
         # Generate merged labels (GT + filtered pseudo-labels)
+        effective_preserve_gt = self._effective_preserve_gt(iteration)
+        gt_labels_dir = self._gt_labels_dir_for_iteration(iteration)
         stats = generator.generate_merged_labels(
             image_paths=self.train_paths,
             output_dir=output_labels_dir,
@@ -228,11 +300,19 @@ class WeaklySupervisedPipeline:
             dup_iou=0.25,  # Lower than 0.5 - allow learning from partial overlaps
             iou_nms=0.5,
             consistency_check=True,  # Enable multi-augmentation consistency filtering
-            consistency_iou=0.7  # High IoU threshold for consistency (stable predictions only)
+            consistency_iou=0.7,  # High IoU threshold for consistency (stable predictions only)
+            preserve_gt=effective_preserve_gt,
+            gt_labels_dir=gt_labels_dir,
         )
         
         logger.info(f"✓ Pseudo-labels generated:")
-        logger.info(f"  GT boxes preserved: {stats['gt_boxes']}")
+        if effective_preserve_gt:
+            if gt_labels_dir is not None:
+                logger.info(f"  Prior-iter labels preserved: {stats['gt_boxes']} (from {gt_labels_dir})")
+            else:
+                logger.info(f"  GT boxes preserved: {stats['gt_boxes']}")
+        else:
+            logger.info(f"  GT boxes preserved: 0 (iteration 1, teacher-only)")
         logger.info(f"  Pseudo-labels added: {stats['pseudo_boxes']}")
         logger.info(f"  Images with new labels: {stats['images_with_pseudo']}")
         logger.info(f"  Total merged boxes: {stats['total_boxes']}")
@@ -308,8 +388,11 @@ class WeaklySupervisedPipeline:
     
         
         logger.info(f"Training for {epochs} epochs with class-weighted loss...")
-        
-        results = student_model.train(
+
+        if self.training_seed is not None:
+            _set_training_seeds(self.training_seed)
+
+        train_kwargs = dict(
             data=str(snapshot_yaml),
             imgsz=self.imgsz,
             rect=False,
@@ -318,7 +401,6 @@ class WeaklySupervisedPipeline:
             device=self.device,
             workers=0,
             epochs=epochs,
-            
             # Conservative augmentation for SSL
             degrees=5.0,
             translate=0.1,
@@ -332,17 +414,14 @@ class WeaklySupervisedPipeline:
             hsv_v=0.40,
             mosaic=0.5,
             close_mosaic=10,
-            
-            # Loss weights 
+            # Loss weights
             box=5.0,
             cls=1.0,
             dfl=1.5,
-            
             # Optimizer (auto)
             optimizer='auto',
             lr0=0.01,
             lrf=0.01,
-            
             # Output settings
             project=str(self.output_dir),
             name=f"student_iter{iteration}",
@@ -350,8 +429,12 @@ class WeaklySupervisedPipeline:
             exist_ok=True,
             resume=False,
             plots=True,
-            save_period=5
+            save_period=5,
         )
+        if self.training_seed is not None:
+            train_kwargs["seed"] = self.training_seed
+
+        results = student_model.train(**train_kwargs)
         
         save_dir = Path(results.save_dir)
         best_model_path = save_dir / "weights" / "best.pt"

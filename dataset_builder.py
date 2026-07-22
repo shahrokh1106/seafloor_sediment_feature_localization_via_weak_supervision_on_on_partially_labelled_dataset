@@ -101,7 +101,6 @@ class SnapshotDatasetBuilder:
             self._copy_label(src_label, dst_label)
         
         # 3. Write split files (remapped to snapshot images/)
-        # Note: No class balancing - VFL loss handles class imbalance naturally
         train_txt = snap_root / "train.txt"
         val_txt = snap_root / "val.txt"
         test_txt = snap_root / "test.txt"
@@ -127,9 +126,7 @@ class SnapshotDatasetBuilder:
         logger.info(f"✓ Snapshot created at: {snap_root}")
         logger.info(f"  Train: {len(train_paths)} images")
         logger.info(f"  Val: {len(val_paths)} images")
-        logger.info(f"  Test: {len(test_paths)} images")
-        logger.info(f"  No class balancing applied (VFL handles imbalance)")
-        
+        logger.info(f"  Test: {len(test_paths)} images")        
         return snap_yaml
     
     def _detect_images_root(self, image_paths: List[str]) -> Path:

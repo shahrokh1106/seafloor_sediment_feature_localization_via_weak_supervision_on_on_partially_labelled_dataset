@@ -1,0 +1,7 @@
+path: C:\Users\IVSLab\Desktop\ai-sediment\Seafloor-Features-Dataset\dataset\burrow_binary
+train: images
+val: images
+test: images
+nc: 1
+names:
+- Burrow
