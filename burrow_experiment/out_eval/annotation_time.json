@@ -1,0 +1,37 @@
+{
+  "seed": 42,
+  "sample_size": 10,
+  "sample_images": [
+    "image_D2023-06-04T16-38-42-682847Z_0_jpg.rf.242a3aa26ebe025dcab9367a1cf138f3.jpg",
+    "image_D2023-06-03T16-28-19-424327Z_0_jpg.rf.6176362c6040bf177720b3ae5e654cb5.jpg",
+    "image_D2023-06-02T07-11-36-797286Z_0_jpg.rf.27acb2c6de3f3fa493e2e61719d38589.jpg",
+    "image_D2023-06-03T16-32-20-064899Z_0_jpg.rf.e758fe6ced19c64065b32d52eec51e2c.jpg",
+    "image_D2023-06-03T16-31-36-224803Z_0_jpg.rf.5a7e9d06c73e0dc94973823df7838c64.jpg",
+    "image_D2023-06-03T16-31-09-424725Z_0_jpg.rf.27509f63bd9ebad6e998a210f0c06ee1.jpg",
+    "image_D2023-06-03T16-29-15-664456Z_0_jpg.rf.5f0b3a7404ce4751e121187be72e9c1b.jpg",
+    "image_D2023-06-03T16-28-12-784306Z_0_jpg.rf.59f42224ac5c528145d3fb425005f007.jpg",
+    "image_D2023-06-18T02-20-29-608351Z_0_jpg.rf.57e8f6d3bff24f9f34961f6f3f69606d.jpg",
+    "image_D2023-06-04T16-35-47-803085Z_0_jpg.rf.3732b0f432a9eea2d081bf67fb3e4941.jpg"
+  ],
+  "times_seconds": [
+    4.036239799985196,
+    2.613577999989502,
+    2.1236402000067756,
+    2.3397839999815915,
+    2.912195899989456,
+    2.7088245000049938,
+    2.247932899976149,
+    2.8194007000129204,
+    3.795859500009101,
+    2.2441749999998137
+  ],
+  "avg_seconds_per_box": 2.78416304999555,
+  "dataset": {
+    "total_images": 350,
+    "total_seed_boxes": 350,
+    "total_gt_boxes": 10072
+  },
+  "estimated_approach_seconds": 974.4570674984425,
+  "estimated_manual_seconds": 28042.09023955518,
+  "recorded_at": "2026-07-22T23:14:28.690620+00:00"
+}

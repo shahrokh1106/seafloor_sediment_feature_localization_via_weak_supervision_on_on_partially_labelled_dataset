@@ -80,3 +80,92 @@ python burrow_experiment/train_base.py --epochs 200 --device 0
 | `--skip-training` | — | Re-run evaluation only if `base/weights/best.pt` exists |
 
 Key outputs: `dataset/`, `base/` (YOLO weights and training artifacts), `evaluation.json`, `training_summary.csv`, `run_config.json`.
+
+---
+
+## Evaluation — `eval_all.py`
+
+`eval_all.py` aggregates **model validation metrics** from all completed runs into simple JSON files under `out_eval/`. Each file lists train/val box counts and metrics (P, R, F1, mAP50, mAP50-95) at initial pseudo-label training and at each SSL iteration.
+
+Requires all five output folders: the four `out_labels_*` SSL runs plus `out_labels_base_gt`. If any are missing, it prints the commands to create them.
+
+### Usage
+
+```bash
+python burrow_experiment/eval_all.py
+```
+
+**Outputs** (`burrow_experiment/out_eval/`):
+
+- `labels_dino_global.json`, `labels_dino_local.json`, `labels_sam_global.json`, `labels_sam_local.json`
+- `base_gt.json`
+
+---
+
+## Label quality — `label_quality.py`
+
+`label_quality.py` measures how well **training labels match ground truth** on the train split at each step — feature-matching pseudos at initial, then SSL pseudo labels at each iteration. Uses the same box-matching metrics as the feature-matching eval (`pseudo_common.evaluate_set`).
+
+### Usage
+
+```bash
+python burrow_experiment/label_quality.py
+```
+
+**Output:** `out_eval/label_quality.json` — one `steps` list per experiment with pred/GT box counts, mAP, and P/R/F1 at IoU 0.50 and 0.75.
+
+---
+
+## Plots — `plot_eval.py`
+
+`plot_eval.py` reads the JSON files produced by `eval_all.py` and plots **model validation metrics** across SSL iterations. One figure per metric; four approach lines plus a dashed horizontal line for the GT baseline.
+
+### Usage
+
+```bash
+python burrow_experiment/plot_eval.py
+```
+
+Run `eval_all.py` first. **Outputs:** `out_eval/plots/` (`precision.png`, `recall.png`, `f1.png`, `map50.png`, `map50_95.png`).
+
+---
+
+## Annotation time — `time.py`
+
+`time.py` estimates how long burrow annotation takes. It shows **10 random images** (seed 42), you draw **one box per image**, and it records the elapsed time per box. From the average it extrapolates:
+
+- **Feature-matching approach** — `avg_time ×` number of seed boxes in the dataset (one seed per image)
+- **Full manual annotation** — `avg_time ×` total GT boxes in the dataset
+
+If `out_eval/annotation_time.json` already exists, the script prints the saved estimate and exits. Use `--force` to run the timed session again.
+
+### Usage
+
+```bash
+python burrow_experiment/time.py
+python burrow_experiment/time.py --force
+```
+
+**Controls:** drag box · `r` reset · `s` save and next · `q` quit
+
+**Output:** `out_eval/annotation_time.json`
+
+---
+
+## Typical workflow
+
+```bash
+# 1. Run all experiments
+python burrow_experiment/run_burrow.py labels_dino_global --iterations 10 --device 0
+python burrow_experiment/run_burrow.py labels_dino_local --iterations 10 --device 0
+python burrow_experiment/run_burrow.py labels_sam_global --iterations 10 --device 0
+python burrow_experiment/run_burrow.py labels_sam_local --iterations 10 --device 0
+python burrow_experiment/train_base.py --device 0
+
+# 2. Aggregate metrics and label quality
+python burrow_experiment/eval_all.py
+python burrow_experiment/label_quality.py
+
+# 3. Plot model metrics
+python burrow_experiment/plot_eval.py
+```
