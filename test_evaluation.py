@@ -14,6 +14,7 @@ import torch
 import random
 import yaml
 import json
+from collections import Counter
 from typing import Dict, Optional
 
 # Set seed for reproducibility
@@ -46,12 +47,68 @@ def load_best_model_info() -> Optional[Dict]:
     """Load best model information."""
     if not BEST_INFO_PATH.exists():
         return None
-    
+
     with open(BEST_INFO_PATH, 'r') as f:
         return json.load(f)
 
 
-def extract_metrics(results, class_names: Dict) -> Dict:
+def get_model_metadata() -> Dict:
+    """Return model identification only (no validation metrics)."""
+    best_info = load_best_model_info()
+    if not best_info:
+        return {'model_path': str(BEST_MODEL_PATH)}
+
+    return {
+        'model_path': str(BEST_MODEL_PATH),
+        'iteration': best_info.get('iteration'),
+        'source_weight': best_info.get('source_weight'),
+    }
+
+
+def label_path_for_image(dataset_root: Path, image_line: str) -> Path:
+    """Resolve YOLO label path from a split-file image entry."""
+    image_path = Path(image_line.strip())
+    stem = image_path.stem
+    labels_dir = dataset_root / 'labels'
+    label_path = labels_dir / f'{stem}.txt'
+    if label_path.exists():
+        return label_path
+
+    # Fallback: replace images/ with labels/ in the path
+    parts = image_path.parts
+    if 'images' in parts:
+        idx = parts.index('images')
+        alt = dataset_root.joinpath(*parts[idx + 1:]).with_suffix('.txt')
+        alt = dataset_root / 'labels' / alt.name
+        if alt.exists():
+            return alt
+
+    return label_path
+
+
+def count_instances_per_class(data_config: Dict, split: str = 'test') -> Dict[int, int]:
+    """Count ground-truth box instances per class for a dataset split."""
+    dataset_root = Path(data_config['path'])
+    split_file = dataset_root / data_config[split]
+    if not split_file.exists():
+        raise FileNotFoundError(f"Split file not found: {split_file}")
+
+    counts: Counter = Counter()
+    for line in split_file.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        label_path = label_path_for_image(dataset_root, line)
+        if not label_path.exists():
+            continue
+        for row in label_path.read_text(encoding='utf-8').splitlines():
+            if row.strip():
+                counts[int(row.split()[0])] += 1
+
+    return dict(counts)
+
+
+def extract_metrics(results, class_names: Dict, instances_per_class: Optional[Dict[int, int]] = None) -> Dict:
     """
     Extract comprehensive metrics from validation results.
     
@@ -131,7 +188,8 @@ def extract_metrics(results, class_names: Dict) -> Dict:
                 per_class_metrics[cls_idx] = {'name': class_name}
             per_class_metrics[cls_idx]['recall'] = float(recall_per_class[cls_idx])
     
-    # Calculate F1 per class
+    # Calculate F1 per class and attach GT instance counts
+    instances_per_class = instances_per_class or {}
     for cls_idx in per_class_metrics:
         prec = per_class_metrics[cls_idx].get('precision', 0.0)
         rec = per_class_metrics[cls_idx].get('recall', 0.0)
@@ -139,9 +197,20 @@ def extract_metrics(results, class_names: Dict) -> Dict:
             per_class_metrics[cls_idx]['f1'] = 2 * prec * rec / (prec + rec)
         else:
             per_class_metrics[cls_idx]['f1'] = 0.0
-    
+        per_class_metrics[cls_idx]['instances'] = int(instances_per_class.get(cls_idx, 0))
+
+    # Include classes that appear in labels but may be missing from metric arrays
+    for cls_idx, count in instances_per_class.items():
+        if cls_idx not in per_class_metrics:
+            class_name = class_names.get(str(cls_idx), class_names.get(cls_idx, f"Class_{cls_idx}"))
+            per_class_metrics[cls_idx] = {
+                'name': class_name,
+                'instances': int(count),
+            }
+
     metrics['per_class'] = per_class_metrics
-    
+    metrics['total_instances'] = int(sum(instances_per_class.values()))
+
     return metrics
 
 
@@ -154,16 +223,9 @@ def main():
     if not BEST_MODEL_PATH.exists():
         raise FileNotFoundError(f"Best model not found: {BEST_MODEL_PATH}")
     
-    # Load best model info
-    best_info = load_best_model_info()
-    if best_info:
-        iteration = best_info.get('iteration', 'Unknown')
-        print(f"Best model: Iteration {iteration}")
-        if 'metrics' in best_info:
-            val_f1 = best_info['metrics'].get('f1', 'N/A')
-            print(f"Validation F1: {val_f1}")
-    else:
-        print("Best model info not found, using best.pt")
+    model_metadata = get_model_metadata()
+    iteration = model_metadata.get('iteration', 'Unknown')
+    print(f"Best model: Iteration {iteration}")
     
     # Load data config
     if not Path(DATA_YAML_PATH).exists():
@@ -178,8 +240,11 @@ def main():
     print(f"Dataset: {data_config.get('path', 'Unknown')}")
     print(f"Number of classes: {num_classes}")
     print(f"Test set: {data_config.get('test', 'Unknown')}")
+
+    instances_per_class = count_instances_per_class(data_config, split='test')
+    print(f"Test instances (GT boxes): {sum(instances_per_class.values())}")
     print()
-    
+
     # Load model
     print(f"Loading model: {BEST_MODEL_PATH}")
     model = YOLO(str(BEST_MODEL_PATH))
@@ -207,17 +272,19 @@ def main():
     print("\nExtracting metrics...")
     
     # Extract all metrics
-    metrics = extract_metrics(results, class_names)
-    
-    # Add metadata
+    metrics = extract_metrics(results, class_names, instances_per_class)
+
     evaluation_results = {
-        'model_path': str(BEST_MODEL_PATH),
-        'model_info': best_info if best_info else None,
+        'model': model_metadata,
         'dataset': {
             'path': data_config.get('path', 'Unknown'),
             'test_split': data_config.get('test', 'Unknown'),
             'num_classes': num_classes,
             'class_names': class_names,
+            'total_instances': sum(instances_per_class.values()),
+            'instances_per_class': {
+                str(k): v for k, v in sorted(instances_per_class.items())
+            },
         },
         'evaluation_settings': {
             'image_size': IMGSZ,
@@ -244,18 +311,22 @@ def main():
     print(f"F1 Score:  {metrics['f1']:.4f}")
     print(f"\nPer-class metrics:")
     print("-" * 70)
-    print(f"{'Class':<20} {'AP50-95':<12} {'AP50':<12} {'Precision':<12} {'Recall':<12} {'F1':<12}")
-    print("-" * 70)
-    
+    print(f"{'Class':<20} {'Inst':<6} {'AP50-95':<12} {'AP50':<12} {'Precision':<12} {'Recall':<12} {'F1':<12}")
+    print("-" * 86)
+
     for cls_idx in sorted(metrics['per_class'].keys()):
         cls_metrics = metrics['per_class'][cls_idx]
         name = cls_metrics.get('name', f'Class_{cls_idx}')
-        ap50_95 = cls_metrics.get('ap50-95', 0.0)  # AP50-95 (Average Precision, not mean)
-        ap50 = cls_metrics.get('ap50', 0.0)  # AP50 (Average Precision, not mean)
+        instances = cls_metrics.get('instances', 0)
+        ap50_95 = cls_metrics.get('ap50-95', 0.0)
+        ap50 = cls_metrics.get('ap50', 0.0)
         precision = cls_metrics.get('precision', 0.0)
         recall = cls_metrics.get('recall', 0.0)
         f1 = cls_metrics.get('f1', 0.0)
-        print(f"{name:<20} {ap50_95:<12.4f} {ap50:<12.4f} {precision:<12.4f} {recall:<12.4f} {f1:<12.4f}")
+        print(
+            f"{name:<20} {instances:<6} {ap50_95:<12.4f} {ap50:<12.4f} "
+            f"{precision:<12.4f} {recall:<12.4f} {f1:<12.4f}"
+        )
     
     print("=" * 70)
     print(f"\nFull results saved to: {OUTPUT_JSON}")

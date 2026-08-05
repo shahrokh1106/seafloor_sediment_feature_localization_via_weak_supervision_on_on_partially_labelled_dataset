@@ -2503,8 +2503,11 @@ def main():
                        help="IoU threshold for visualization NMS (default: 0.5)")
     parser.add_argument("--force", action="store_true",
                        help="Force re-evaluation even if results exist")
-    parser.add_argument("--experiment", choices=['gaussian', 'underwater', 'tta', 'all'], default=None,
-                       help="Run experiment: 'gaussian'=blur test, 'underwater'=underwater effect, 'tta'=augmentation consistency, 'all'=comparison+all experiments")
+    parser.add_argument("--experiment", choices=['gaussian', 'underwater', 'backscatter', 'illumination', 'combined', 'tta', 'all'], default=None,
+                       help="Run experiment: 'gaussian'=blur test, 'underwater'=underwater effect, "
+                            "'backscatter'=veiling-light backscatter, 'illumination'=non-uniform lighting, "
+                            "'combined'=backscatter + illumination, "
+                            "'tta'=augmentation consistency, 'all'=comparison+all experiments")
     parser.add_argument("--show_model", default="best",
                        help="Model to visualize: 'best' or iteration number (e.g., 0,1,2,3,4)")
     
@@ -2547,6 +2550,30 @@ def main():
             underwater_exp = UnderwaterEffectExperiment(conf_threshold=args.conf, iou_threshold=args.iou,
                                                        force_reeval=args.force)
             underwater_exp.run()
+
+        if args.experiment == 'backscatter':
+            print("\n" + "="*60)
+            print("RUNNING BACKSCATTER ROBUSTNESS EXPERIMENT")
+            print("="*60)
+            from underwater_robustness_experiments import BackscatterExperiment
+            BackscatterExperiment(conf_threshold=args.conf, iou_threshold=args.iou,
+                                  force_reeval=args.force).run()
+
+        if args.experiment == 'illumination':
+            print("\n" + "="*60)
+            print("RUNNING NON-UNIFORM ILLUMINATION EXPERIMENT")
+            print("="*60)
+            from underwater_robustness_experiments import IlluminationExperiment
+            IlluminationExperiment(conf_threshold=args.conf, iou_threshold=args.iou,
+                                   force_reeval=args.force).run()
+
+        if args.experiment == 'combined':
+            print("\n" + "="*60)
+            print("RUNNING COMBINED BACKSCATTER + ILLUMINATION EXPERIMENT")
+            print("="*60)
+            from underwater_robustness_experiments import CombinedExperiment
+            CombinedExperiment(conf_threshold=args.conf, iou_threshold=args.iou,
+                               force_reeval=args.force).run()
         
         # Run TTA consistency experiment if specified or if 'all'
         if args.experiment == 'tta' or args.experiment == 'all':
