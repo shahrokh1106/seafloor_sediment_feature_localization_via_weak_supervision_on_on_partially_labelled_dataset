@@ -8,6 +8,41 @@ We first evaluated the framework on a controlled binary-burrow benchmark with 10
 
 ---
 
+## Datasets
+
+### Burrow benchmark (included with the repository)
+
+The **burrow dataset** is bundled with this repository. You will find it at:
+
+- **`burrow_experiment/dataset_burrow/`** — used for weakly supervised YOLO training and evaluation
+- **`feature_matching_scripts/dataset_burrow/`** — used for the annotation acceleration pipeline (seed drawing and pseudo-label generation)
+
+This benchmark was built from the publicly available Nephrops (*Nephrops norvegicus*) dataset from Irish underwater television surveys (Melvin et al., 2024). The original release provides fine-grained annotations of selected Nephrops burrow types and states rather than exhaustive annotations of all visible burrows, and includes overlapping frames from survey transects. We selected **350 images** and exhaustively annotated all visible burrows, yielding **10,072 bounding boxes** for binary burrow detection.
+
+### Seafloor sediment-linked feature dataset (download required)
+
+Images were collected with a **GoPro Hero 12** camera mounted on a sledge towed over seafloor sediment habitats surrounding **Coromandel Peninsula Channel Island / Motu Takapu, New Zealand**. The dataset covers ten sediment-linked feature classes (anemones, bryozoans, burrows, divets, fanworms, horse mussel shells, hydroids, mounds, and two sponge categories) with training images, pseudo training labels (verified/filtered by experts), fully annotated validation and test splits.
+
+Download the dataset archive from:
+
+**[ ]** *(download link to be added)*
+
+Extract it at the **repository root** so you have a self-contained folder:
+
+```text
+detector_dataset_simple/
+  data.yaml
+  train.txt
+  val.txt
+  test.txt
+  images/
+  labels/
+```
+
+Open `detector_dataset_simple/data.yaml` and set `path` to your local dataset directory (for example `./detector_dataset_simple`). This folder is required for evaluation and retraining steps described later in this README.
+
+---
+
 ## 1. Clone the repository
 
 ```bash
@@ -157,7 +192,7 @@ python test_evaluation.py
 
 The steps above assume you use the provided **`trained_models/`** archive. To **train from scratch** on the same dataset, run the two-stage pipeline below from the repository root (with the Python environment activated).
 
-You need the same **`detector_dataset_simple/`** setup as in the evaluation section (`data.yaml`, splits, images, and labels). The train split contains the partially labelled boxes used for weak supervision; validation and test use fully annotated labels. A GPU is strongly recommended; initial training can take many hours.
+You need the same **`detector_dataset_simple/`** setup as in the evaluation section (`data.yaml`, splits, images, and labels); initial training can take many hours.
 
 ### Stage 1 — Initial training
 
@@ -186,31 +221,8 @@ python run_ssl.py
 
 This expects the Stage 1 checkpoint at `training_results_simple/full_initial_bce/weights/best.pt` and writes results to **`ssl_simple_results_bce/`** (30 iterations by default).
 
-To change iteration count, output folder, or device, use the launcher script directly:
-
-```bash
-python ssl_weakly_supervised.py \
-  --teacher training_results_simple/full_initial_bce/weights/best.pt \
-  --dataset detector_dataset_simple \
-  --output ssl_simple_results_bce \
-  --iterations 30 \
-  --device 0
-```
-
-**Key outputs:** `ssl_simple_results_bce/training_log.json`, `ssl_simple_results_bce/training_summary.csv`, and per-iteration weights under `ssl_simple_results_bce/student_iter<N>/weights/best.pt`.
-
 ### Link trained weights to the evaluation scripts
 
-`compare_models.py`, `bootstrap_val.py`, and `test_evaluation.py` read checkpoints from **`trained_models/`**. After training, copy the initial model and the refinement checkpoints you want to compare (we used iterations **0–4** in the paper):
-
-```bash
-mkdir -p trained_models/0/weights trained_models/1/weights trained_models/2/weights trained_models/3/weights trained_models/4/weights
-
-cp training_results_simple/full_initial_bce/weights/best.pt trained_models/0/weights/best.pt
-cp ssl_simple_results_bce/student_iter1/weights/best.pt trained_models/1/weights/best.pt
-cp ssl_simple_results_bce/student_iter2/weights/best.pt trained_models/2/weights/best.pt
-cp ssl_simple_results_bce/student_iter3/weights/best.pt trained_models/3/weights/best.pt
-cp ssl_simple_results_bce/student_iter4/weights/best.pt trained_models/4/weights/best.pt
-```
+`compare_models.py`, `bootstrap_val.py`, and `test_evaluation.py` read checkpoints from **`trained_models/`**. After training, copy the initial model and the refinement checkpoints you want to compare (we used iterations **0–4** in the paper)
 
 Then run the evaluation steps above (model comparison, robustness experiments, bootstrap, and test evaluation). `compare_models.py` will select the best iteration and populate `trained_models/best_model/best.pt` automatically.
