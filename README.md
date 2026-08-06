@@ -150,3 +150,67 @@ Held-out **test set** evaluation (`test.txt`) using the best model.
 python test_evaluation.py
 ```
 **Output:** `test_evaluation_results.json` at the repository root (overall metrics, per-class AP50 / AP50-95, precision, recall, F1, and test-set instance counts).
+
+---
+
+## Retraining on the seafloor sediment-linked feature dataset
+
+The steps above assume you use the provided **`trained_models/`** archive. To **train from scratch** on the same dataset, run the two-stage pipeline below from the repository root (with the Python environment activated).
+
+You need the same **`detector_dataset_simple/`** setup as in the evaluation section (`data.yaml`, splits, images, and labels). The train split contains the partially labelled boxes used for weak supervision; validation and test use fully annotated labels. A GPU is strongly recommended; initial training can take many hours.
+
+### Stage 1 — Initial training
+
+Train a YOLO11s detector on the train split (`initial_training.py`). This produces the starting checkpoint for iterative refinement.
+
+```bash
+python initial_training.py
+```
+
+**Output:** `training_results_simple/full_initial_bce/weights/best.pt` (plus training logs and validation metrics under `training_results_simple/full_initial_bce/`).
+
+Default settings in the script: 200 epochs, image size 960, batch size 8, multi-scale training. Edit `DEVICE` at the top of `initial_training.py` if you need CPU or a different GPU index.
+
+### Stage 2 — Iterative weak supervision
+
+Run the refinement loop (`run_ssl.py`). Each iteration:
+
+1. Tunes a confidence threshold on the validation set.
+2. Predicts pseudo-labels on train images and merges them with existing train labels (with consistency filtering, duplicate removal, and non-maximum suppression).
+3. Retrains the detector on the expanded label set.
+4. Keeps the best checkpoint (by validation F1) for the next iteration.
+
+```bash
+python run_ssl.py
+```
+
+This expects the Stage 1 checkpoint at `training_results_simple/full_initial_bce/weights/best.pt` and writes results to **`ssl_simple_results_bce/`** (30 iterations by default).
+
+To change iteration count, output folder, or device, use the launcher script directly:
+
+```bash
+python ssl_weakly_supervised.py \
+  --teacher training_results_simple/full_initial_bce/weights/best.pt \
+  --dataset detector_dataset_simple \
+  --output ssl_simple_results_bce \
+  --iterations 30 \
+  --device 0
+```
+
+**Key outputs:** `ssl_simple_results_bce/training_log.json`, `ssl_simple_results_bce/training_summary.csv`, and per-iteration weights under `ssl_simple_results_bce/student_iter<N>/weights/best.pt`.
+
+### Link trained weights to the evaluation scripts
+
+`compare_models.py`, `bootstrap_val.py`, and `test_evaluation.py` read checkpoints from **`trained_models/`**. After training, copy the initial model and the refinement checkpoints you want to compare (we used iterations **0–4** in the paper):
+
+```bash
+mkdir -p trained_models/0/weights trained_models/1/weights trained_models/2/weights trained_models/3/weights trained_models/4/weights
+
+cp training_results_simple/full_initial_bce/weights/best.pt trained_models/0/weights/best.pt
+cp ssl_simple_results_bce/student_iter1/weights/best.pt trained_models/1/weights/best.pt
+cp ssl_simple_results_bce/student_iter2/weights/best.pt trained_models/2/weights/best.pt
+cp ssl_simple_results_bce/student_iter3/weights/best.pt trained_models/3/weights/best.pt
+cp ssl_simple_results_bce/student_iter4/weights/best.pt trained_models/4/weights/best.pt
+```
+
+Then run the evaluation steps above (model comparison, robustness experiments, bootstrap, and test evaluation). `compare_models.py` will select the best iteration and populate `trained_models/best_model/best.pt` automatically.
