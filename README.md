@@ -25,9 +25,9 @@ Images were collected with a **GoPro Hero 12** camera mounted on a sledge towed 
 
 Download the dataset archive from:
 
-**[ ]** *(download link to be added)*
+**[Dropbox — images](https://www.dropbox.com/scl/fo/of47g4cw9j3xhpee1w7a0/APzHdSv6VyfOztcU2ngWoZM?rlkey=jz2p56joik6mxnzhrerpydaan&st=uz81j4nj&dl=0)**
 
-Extract it at the **repository root** so you have a self-contained folder:
+Extract "images" folder and place it in "detector_dataset_simple" at the **repository root** so you have a folder like:
 
 ```text
 detector_dataset_simple/
@@ -130,13 +130,7 @@ The sections below describe how to **reproduce our evaluation** on the seafloor 
 
 ### Dataset and pretrained weights
 
-Place the **`detector_dataset_simple/`** folder at the **repository root** (alongside `compare_models.py`). It must be self-contained: `data.yaml`, `train.txt`, `val.txt`, `test.txt`, `images/` (actual image files), and `labels/` (10-class YOLO labels).
-
-After unpacking, open `detector_dataset_simple/data.yaml` and set `path` to your local dataset directory, for example:
-
-```yaml
-path: ./detector_dataset_simple
-```
+**`detector_dataset_simple/`** folder must include: `data.yaml`, `train.txt`, `val.txt`, `test.txt`, `images/` (actual image files), and `labels/` (10-class YOLO labels).
 
 Download the pretrained **`trained_models/`** archive (`trained_models.rar`) from:
 
