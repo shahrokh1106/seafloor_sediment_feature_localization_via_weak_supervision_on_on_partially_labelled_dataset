@@ -186,6 +186,28 @@ python test_evaluation.py
 ```
 **Output:** `test_evaluation_results.json` at the repository root (overall metrics, per-class AP50 / AP50-95, precision, recall, F1, and test-set instance counts).
 
+### 5. DINOv3 validation-set feature analysis (`dinov3_validation_set.py`)
+
+This script analyses **DINOv3 box-level features** on the fully annotated **validation split** of `detector_dataset_simple/`. For each ground-truth bounding box, it extracts dense ViT-L/16 features (averaged over patches inside the box), computes per-class centroids, and measures **intra-class cosine distance** from each class centroid. The results summarise how consistently each sediment-feature class is represented in DINOv3 feature space and how separated the class centroids are—useful context for the seed-based annotation acceleration stage of the framework.
+
+**Prerequisites:** DINOv3 installed under `feature_matching_scripts/` (see **[feature_matching_scripts/setup.md](feature_matching_scripts/setup.md)** — DINOv3 setup section) and `detector_dataset_simple/` at the repository root with `data.yaml` paths configured.
+
+Run from **`feature_matching_scripts/`**:
+
+```bash
+cd feature_matching_scripts
+python dinov3_validation_set.py
+```
+
+The script reads `../detector_dataset_simple/val.txt` and matching labels, runs inference with the local DINOv3 ViT-L/16 weights, and writes plots to **`feature_matching_scripts/dinov3_validation_set/`**:
+
+| Output | Description |
+|--------|-------------|
+| `intra_class_distances.png` | Per-class mean cosine distance from the class centroid (lower = more consistent within-class features) |
+| `class_centroids_pca.png` | 2D PCA projection of class centroids (visual summary of inter-class separation) |
+
+Console output also reports the number of boxes processed per class.
+
 ---
 
 ## Retraining on the seafloor sediment-linked feature dataset
